@@ -1,0 +1,10 @@
+[package]
+name = "cargo-zempic"
+description = "Cargo command for optimization a project's binary size"
+repository = "https://github.com/regexident/cargo-zempic"
+license = "MIT OR Apache-2.0"
+edition = "2024"
+rust-version = "1.85.0"
+version = "0.0.1"
+
+[dependencies]
