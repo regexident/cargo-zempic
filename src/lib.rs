@@ -31,4 +31,24 @@ pub enum ZempicError {
         /// Underlying TOML failure.
         source: toml_edit::TomlError,
     },
+
+    /// A profile setting holds a value cargo does not accept.
+    #[error("invalid value `{found}` for `{key}` in manifest `{path}`")]
+    ProfileValue {
+        /// Path of the manifest carrying the setting.
+        path: camino::Utf8PathBuf,
+        /// Dotted key of the offending setting, for example `profile.release.lto`.
+        key: String,
+        /// Textual form of the value that was found.
+        found: String,
+    },
+
+    /// A profile name contains a character cargo does not accept.
+    #[error("invalid profile name `{name}` in manifest `{path}`")]
+    ProfileName {
+        /// Path of the manifest declaring the profile.
+        path: camino::Utf8PathBuf,
+        /// The offending profile name.
+        name: String,
+    },
 }

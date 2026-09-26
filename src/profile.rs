@@ -242,6 +242,362 @@ fn release_defaults() -> ResolvedProfile {
     }
 }
 
+/// The settings written in one `[profile.<name>]` table of a manifest.
+///
+/// Each setting is present only when the table sets it. The accompanying
+/// [`crate::manifest::KeySpan`] locates the key, and the profile's `inherits`
+/// value is captured verbatim without resolving which profile it names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileTable {
+    /// Profile name as written in the table header.
+    pub name: String,
+    /// Value of `inherits`, when the table sets it.
+    pub inherits: Option<String>,
+    /// Value of `opt-level`.
+    pub opt_level: Option<(OptLevel, crate::manifest::KeySpan)>,
+    /// Value of `lto`.
+    pub lto: Option<(Lto, crate::manifest::KeySpan)>,
+    /// Value of `strip`.
+    pub strip: Option<(Strip, crate::manifest::KeySpan)>,
+    /// Value of `panic`.
+    pub panic: Option<(PanicStrategy, crate::manifest::KeySpan)>,
+    /// Value of `debug`.
+    pub debug: Option<(DebugInfo, crate::manifest::KeySpan)>,
+    /// Value of `codegen-units`.
+    pub codegen_units: Option<(u32, crate::manifest::KeySpan)>,
+    /// Value of `incremental`.
+    pub incremental: Option<(bool, crate::manifest::KeySpan)>,
+    /// Value of `debug-assertions`.
+    pub debug_assertions: Option<(bool, crate::manifest::KeySpan)>,
+    /// Value of `overflow-checks`.
+    pub overflow_checks: Option<(bool, crate::manifest::KeySpan)>,
+}
+
+/// Reads every immediate `[profile.<name>]` table from `manifest`.
+///
+/// The result maps each profile name to the settings its table sets. A document
+/// without a `[profile]` table yields an empty map. Keys outside the modelled
+/// settings and `inherits` are ignored, because cargo accepts settings this
+/// scope does not model.
+///
+/// # Errors
+///
+/// Returns [`crate::ZempicError::ProfileName`] when a profile name contains a
+/// character outside `[A-Za-z0-9_-]`, and [`crate::ZempicError::ProfileValue`]
+/// when a modelled setting holds a value cargo does not accept:
+/// [`crate::ZempicError`].
+pub fn profile_tables(
+    manifest: &crate::manifest::ManifestDocument,
+) -> crate::Result<std::collections::BTreeMap<String, ProfileTable>> {
+    let mut tables = std::collections::BTreeMap::new();
+
+    let Some(profile) = manifest
+        .document()
+        .as_table()
+        .get("profile")
+        .and_then(toml_edit::Item::as_table)
+    else {
+        return Ok(tables);
+    };
+
+    for (name, item) in profile.iter() {
+        if !is_valid_profile_name(name) {
+            return Err(crate::ZempicError::ProfileName {
+                path: manifest.path().to_owned(),
+                name: name.to_owned(),
+            });
+        }
+
+        let table = item.as_table().expect("a profile sub-table is a table");
+        let ctx = SettingContext {
+            manifest,
+            profile: name,
+        };
+
+        tables.insert(name.to_owned(), read_profile_table(name, table, &ctx)?);
+    }
+
+    Ok(tables)
+}
+
+/// Reads the modelled settings of one profile table.
+///
+/// Only settings that justify a rule are read; anything else in the table is
+/// left untouched so that cargo settings outside this scope pass unnoticed.
+fn read_profile_table(
+    name: &str,
+    table: &toml_edit::Table,
+    ctx: &SettingContext<'_>,
+) -> crate::Result<ProfileTable> {
+    let item = |setting| table.get(setting);
+
+    Ok(ProfileTable {
+        name: name.to_owned(),
+        inherits: item("inherits")
+            .and_then(toml_edit::Item::as_str)
+            .map(str::to_owned),
+        opt_level: read_setting(item("opt-level"), ctx, "opt-level", parse_opt_level)?,
+        lto: read_setting(item("lto"), ctx, "lto", parse_lto)?,
+        strip: read_setting(item("strip"), ctx, "strip", parse_strip)?,
+        panic: read_setting(item("panic"), ctx, "panic", parse_panic)?,
+        debug: read_setting(item("debug"), ctx, "debug", parse_debug)?,
+        codegen_units: read_setting(item("codegen-units"), ctx, "codegen-units", parse_integer)?,
+        incremental: read_setting(item("incremental"), ctx, "incremental", parse_bool)?,
+        debug_assertions: read_setting(
+            item("debug-assertions"),
+            ctx,
+            "debug-assertions",
+            parse_bool,
+        )?,
+        overflow_checks: read_setting(item("overflow-checks"), ctx, "overflow-checks", parse_bool)?,
+    })
+}
+
+/// Reports whether `name` is a profile name cargo accepts, that is, one whose
+/// characters are all ASCII alphanumerics, `-` or `_`.
+///
+/// cargo restricts profile names to these characters, and the name becomes a
+/// segment of the dotted keys used to look up spans, so a dot or quote inside a
+/// name would make those keys ambiguous.
+fn is_valid_profile_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+        })
+}
+
+/// Locates a setting within a manifest's profile table.
+struct SettingContext<'a> {
+    manifest: &'a crate::manifest::ManifestDocument,
+    profile: &'a str,
+}
+
+impl SettingContext<'_> {
+    /// The dotted key of `setting` within this profile, used both to locate the
+    /// key's span and to name it in an error.
+    fn dotted_key(&self, setting: &str) -> String {
+        format!("profile.{}.{}", self.profile, setting)
+    }
+
+    /// The error raised when a setting holds a value cargo does not accept.
+    fn invalid(&self, setting: &str, found: String) -> crate::ZempicError {
+        crate::ZempicError::ProfileValue {
+            path: self.manifest.path().to_owned(),
+            key: self.dotted_key(setting),
+            found,
+        }
+    }
+}
+
+/// Applies `parse` to an optional setting, attaching the setting's key span.
+fn read_setting<T>(
+    item: Option<&toml_edit::Item>,
+    ctx: &SettingContext<'_>,
+    setting: &str,
+    parse: impl Fn(Option<&toml_edit::Item>, &SettingContext<'_>, &str) -> crate::Result<Option<T>>,
+) -> crate::Result<Option<(T, crate::manifest::KeySpan)>> {
+    match parse(item, ctx, setting)? {
+        Some(value) => Ok(Some((
+            value,
+            ctx.manifest
+                .key_span(&ctx.dotted_key(setting))
+                .expect("a setting read from the document has a span"),
+        ))),
+        None => Ok(None),
+    }
+}
+
+/// Parses `opt-level`, mapping its integer and string spellings.
+fn parse_opt_level(
+    item: Option<&toml_edit::Item>,
+    ctx: &SettingContext<'_>,
+    setting: &str,
+) -> crate::Result<Option<OptLevel>> {
+    let Some(item) = item else {
+        return Ok(None);
+    };
+
+    let value = if let Some(integer) = item.as_integer() {
+        match integer {
+            0 => OptLevel::Zero,
+            1 => OptLevel::One,
+            2 => OptLevel::Two,
+            3 => OptLevel::Three,
+            _ => return Err(ctx.invalid(setting, render(item))),
+        }
+    } else if let Some(text) = item.as_str() {
+        match text {
+            "0" => OptLevel::Zero,
+            "1" => OptLevel::One,
+            "2" => OptLevel::Two,
+            "3" => OptLevel::Three,
+            "s" => OptLevel::Size,
+            "z" => OptLevel::SizeNoVectorize,
+            _ => return Err(ctx.invalid(setting, render(item))),
+        }
+    } else {
+        return Err(ctx.invalid(setting, render(item)));
+    };
+
+    Ok(Some(value))
+}
+
+/// Parses `lto`, mapping `true` and `"fat"` to the same whole-graph mode.
+fn parse_lto(
+    item: Option<&toml_edit::Item>,
+    ctx: &SettingContext<'_>,
+    setting: &str,
+) -> crate::Result<Option<Lto>> {
+    let Some(item) = item else {
+        return Ok(None);
+    };
+
+    let value = if let Some(flag) = item.as_bool() {
+        if flag { Lto::Fat } else { Lto::Off }
+    } else if let Some(text) = item.as_str() {
+        match text {
+            "off" => Lto::Off,
+            "thin" => Lto::Thin,
+            "fat" => Lto::Fat,
+            _ => return Err(ctx.invalid(setting, render(item))),
+        }
+    } else {
+        return Err(ctx.invalid(setting, render(item)));
+    };
+
+    Ok(Some(value))
+}
+
+/// Parses `strip`, mapping `true` to the same mode as `"symbols"`.
+fn parse_strip(
+    item: Option<&toml_edit::Item>,
+    ctx: &SettingContext<'_>,
+    setting: &str,
+) -> crate::Result<Option<Strip>> {
+    let Some(item) = item else {
+        return Ok(None);
+    };
+
+    let value = if let Some(flag) = item.as_bool() {
+        if flag { Strip::Symbols } else { Strip::None }
+    } else if let Some(text) = item.as_str() {
+        match text {
+            "none" => Strip::None,
+            "debuginfo" => Strip::DebugInfo,
+            "symbols" => Strip::Symbols,
+            _ => return Err(ctx.invalid(setting, render(item))),
+        }
+    } else {
+        return Err(ctx.invalid(setting, render(item)));
+    };
+
+    Ok(Some(value))
+}
+
+/// Parses `panic`, whose only spellings are the two strategy names.
+fn parse_panic(
+    item: Option<&toml_edit::Item>,
+    ctx: &SettingContext<'_>,
+    setting: &str,
+) -> crate::Result<Option<PanicStrategy>> {
+    let Some(item) = item else {
+        return Ok(None);
+    };
+
+    let value = match item.as_str() {
+        Some("unwind") => PanicStrategy::Unwind,
+        Some("abort") => PanicStrategy::Abort,
+        _ => return Err(ctx.invalid(setting, render(item))),
+    };
+
+    Ok(Some(value))
+}
+
+/// Parses `debug`, mapping `1` and `"limited"` to the same detail level.
+fn parse_debug(
+    item: Option<&toml_edit::Item>,
+    ctx: &SettingContext<'_>,
+    setting: &str,
+) -> crate::Result<Option<DebugInfo>> {
+    let Some(item) = item else {
+        return Ok(None);
+    };
+
+    let value = if let Some(flag) = item.as_bool() {
+        if flag {
+            DebugInfo::Full
+        } else {
+            DebugInfo::None
+        }
+    } else if let Some(integer) = item.as_integer() {
+        match integer {
+            0 => DebugInfo::None,
+            1 => DebugInfo::Limited,
+            2 => DebugInfo::Full,
+            _ => return Err(ctx.invalid(setting, render(item))),
+        }
+    } else if let Some(text) = item.as_str() {
+        match text {
+            "none" => DebugInfo::None,
+            "line-directives-only" => DebugInfo::LineDirectivesOnly,
+            "line-tables-only" => DebugInfo::LineTablesOnly,
+            "limited" => DebugInfo::Limited,
+            "full" => DebugInfo::Full,
+            _ => return Err(ctx.invalid(setting, render(item))),
+        }
+    } else {
+        return Err(ctx.invalid(setting, render(item)));
+    };
+
+    Ok(Some(value))
+}
+
+/// Parses the count `codegen-units` holds.
+fn parse_integer(
+    item: Option<&toml_edit::Item>,
+    ctx: &SettingContext<'_>,
+    setting: &str,
+) -> crate::Result<Option<u32>> {
+    let Some(item) = item else {
+        return Ok(None);
+    };
+
+    match item
+        .as_integer()
+        .and_then(|value| u32::try_from(value).ok())
+    {
+        Some(value) => Ok(Some(value)),
+        None => Err(ctx.invalid(setting, render(item))),
+    }
+}
+
+/// Parses a boolean-valued setting, which accepts only `true` and `false`.
+fn parse_bool(
+    item: Option<&toml_edit::Item>,
+    ctx: &SettingContext<'_>,
+    setting: &str,
+) -> crate::Result<Option<bool>> {
+    let Some(item) = item else {
+        return Ok(None);
+    };
+
+    match item.as_bool() {
+        Some(value) => Ok(Some(value)),
+        None => Err(ctx.invalid(setting, render(item))),
+    }
+}
+
+/// Renders a setting's value for an error message.
+///
+/// A string value is reported as its contents without quotes, since cargo
+/// treats the string's payload as the value, while every other shape is
+/// reported in its TOML form.
+fn render(item: &toml_edit::Item) -> String {
+    match item.as_str() {
+        Some(text) => text.to_owned(),
+        None => item.to_string().trim().to_owned(),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +671,166 @@ mod tests {
         }
 
         assert_eq!(BuiltinProfile::from_name("custom"), None);
+    }
+
+    fn manifest(text: &str) -> crate::manifest::ManifestDocument {
+        crate::manifest::ManifestDocument::parse(camino::Utf8Path::new("Cargo.toml"), text).unwrap()
+    }
+
+    #[test]
+    fn profile_tables_is_empty_without_a_profile_table() {
+        let document = manifest("[package]\nname = \"demo\"\n");
+
+        let tables = profile_tables(&document).unwrap();
+
+        assert!(tables.is_empty());
+    }
+
+    #[test]
+    fn lto_spellings_map_to_variants() {
+        let document = manifest(
+            "[profile.off]\nlto = false\n\
+             [profile.on]\nlto = true\n\
+             [profile.thin]\nlto = \"thin\"\n\
+             [profile.fat]\nlto = \"fat\"\n",
+        );
+
+        let tables = profile_tables(&document).unwrap();
+
+        assert_eq!(tables["off"].lto.as_ref().unwrap().0, Lto::Off);
+        assert_eq!(tables["on"].lto.as_ref().unwrap().0, Lto::Fat);
+        assert_eq!(tables["thin"].lto.as_ref().unwrap().0, Lto::Thin);
+        assert_eq!(tables["fat"].lto.as_ref().unwrap().0, Lto::Fat);
+    }
+
+    #[test]
+    fn opt_level_spellings_map_to_variants() {
+        let document = manifest(
+            "lto = false\n\
+             [profile.three]\nopt-level = 3\n\
+             [profile.three_str]\nopt-level = \"3\"\n\
+             [profile.size]\nopt-level = \"s\"\n\
+             [profile.zn]\nopt-level = \"z\"\n",
+        );
+
+        let tables = profile_tables(&document).unwrap();
+
+        assert_eq!(
+            tables["three"].opt_level.as_ref().unwrap().0,
+            OptLevel::Three
+        );
+        assert_eq!(
+            tables["three_str"].opt_level.as_ref().unwrap().0,
+            OptLevel::Three
+        );
+        assert_eq!(tables["size"].opt_level.as_ref().unwrap().0, OptLevel::Size);
+        assert_eq!(
+            tables["zn"].opt_level.as_ref().unwrap().0,
+            OptLevel::SizeNoVectorize
+        );
+    }
+
+    #[test]
+    fn strip_and_debug_spellings_map_to_variants() {
+        let document = manifest(
+            "[profile.a]\nstrip = true\ndebug = 1\n\
+             [profile.b]\nstrip = false\ndebug = 0\n\
+             [profile.c]\nstrip = \"debuginfo\"\ndebug = \"limited\"\n\
+             [profile.d]\nstrip = \"symbols\"\ndebug = 2\n\
+             [profile.e]\nstrip = \"none\"\ndebug = \"full\"\n\
+             [profile.f]\ndebug = \"line-directives-only\"\n\
+             [profile.g]\ndebug = \"line-tables-only\"\n\
+             [profile.h]\ndebug = \"none\"\n",
+        );
+
+        let tables = profile_tables(&document).unwrap();
+
+        assert_eq!(tables["a"].strip.as_ref().unwrap().0, Strip::Symbols);
+        assert_eq!(tables["a"].debug.as_ref().unwrap().0, DebugInfo::Limited);
+        assert_eq!(tables["b"].strip.as_ref().unwrap().0, Strip::None);
+        assert_eq!(tables["b"].debug.as_ref().unwrap().0, DebugInfo::None);
+        assert_eq!(tables["c"].strip.as_ref().unwrap().0, Strip::DebugInfo);
+        assert_eq!(tables["c"].debug.as_ref().unwrap().0, DebugInfo::Limited);
+        assert_eq!(tables["d"].strip.as_ref().unwrap().0, Strip::Symbols);
+        assert_eq!(tables["d"].debug.as_ref().unwrap().0, DebugInfo::Full);
+        assert_eq!(tables["e"].strip.as_ref().unwrap().0, Strip::None);
+        assert_eq!(tables["e"].debug.as_ref().unwrap().0, DebugInfo::Full);
+        assert_eq!(
+            tables["f"].debug.as_ref().unwrap().0,
+            DebugInfo::LineDirectivesOnly
+        );
+        assert_eq!(
+            tables["g"].debug.as_ref().unwrap().0,
+            DebugInfo::LineTablesOnly
+        );
+        assert_eq!(tables["h"].debug.as_ref().unwrap().0, DebugInfo::None);
+    }
+
+    #[test]
+    fn settings_carry_their_key_spans() {
+        let document = manifest("[profile.release]\nlto = true\npanic = \"abort\"\n");
+
+        let tables = profile_tables(&document).unwrap();
+        let table = &tables["release"];
+
+        let lto_span = &table.lto.as_ref().unwrap().1;
+        assert_eq!(lto_span.key, "profile.release.lto");
+        assert_eq!(lto_span.line, 2);
+        assert_eq!(lto_span.column, 1);
+        assert_eq!(lto_span.file, camino::Utf8PathBuf::from("Cargo.toml"));
+
+        let panic_span = &table.panic.as_ref().unwrap().1;
+        assert_eq!(panic_span.key, "profile.release.panic");
+        assert_eq!(panic_span.line, 3);
+        assert_eq!(panic_span.column, 1);
+    }
+
+    #[test]
+    fn inherits_is_captured_verbatim() {
+        let document = manifest("[profile.custom]\ninherits = \"release\"\n");
+
+        let tables = profile_tables(&document).unwrap();
+
+        assert_eq!(tables["custom"].inherits.as_deref(), Some("release"));
+    }
+
+    #[test]
+    fn unmodelled_keys_are_ignored() {
+        let document = manifest("[profile.release]\nlto = true\nrpath = false\n");
+
+        let tables = profile_tables(&document).unwrap();
+
+        assert_eq!(tables["release"].lto.as_ref().unwrap().0, Lto::Fat);
+    }
+
+    #[test]
+    fn malformed_value_is_an_error() {
+        let document = manifest("[profile.release]\nlto = \"sometimes\"\n");
+
+        let error = profile_tables(&document).unwrap_err();
+
+        match error {
+            crate::ZempicError::ProfileValue { path, key, found } => {
+                assert_eq!(path, camino::Utf8PathBuf::from("Cargo.toml"));
+                assert_eq!(key, "profile.release.lto");
+                assert_eq!(found, "sometimes");
+            }
+            other => panic!("expected ProfileValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn illegal_profile_name_is_an_error() {
+        let document = manifest("[profile.\"my.profile\"]\nlto = true\n");
+
+        let error = profile_tables(&document).unwrap_err();
+
+        match error {
+            crate::ZempicError::ProfileName { path, name } => {
+                assert_eq!(path, camino::Utf8PathBuf::from("Cargo.toml"));
+                assert_eq!(name, "my.profile");
+            }
+            other => panic!("expected ProfileName, got {other:?}"),
+        }
     }
 }
