@@ -8,3 +8,9 @@ rust-version = "1.85.0"
 version = "0.0.1"
 
 [dependencies]
+camino = "1.2.6"
+thiserror = "2.0.21"
+toml_edit = "0.25.15"
+
+[dev-dependencies]
+tempfile = "3.27.0"
