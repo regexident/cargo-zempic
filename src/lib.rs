@@ -6,6 +6,7 @@
 //! Rendering and exit-code mapping live in the binary target.
 
 pub mod manifest;
+pub mod profile;
 
 /// The result type used throughout the crate, carrying [`ZempicError`].
 pub type Result<T> = std::result::Result<T, ZempicError>;
