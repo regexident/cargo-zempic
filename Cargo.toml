@@ -4,11 +4,12 @@ description = "Cargo command for optimization a project's binary size"
 repository = "https://github.com/regexident/cargo-zempic"
 license = "MIT OR Apache-2.0"
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.86.0"
 version = "0.0.1"
 
 [dependencies]
 camino = "1.2.6"
+cargo_metadata = "0.23.1"
 thiserror = "2.0.21"
 toml_edit = "0.25.15"
 
