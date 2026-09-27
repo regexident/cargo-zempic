@@ -51,4 +51,42 @@ pub enum ZempicError {
         /// The offending profile name.
         name: String,
     },
+
+    /// A requested profile is neither a built-in nor declared in the manifest.
+    #[error("profile `{name}` is not defined in manifest `{path}`")]
+    UnknownProfile {
+        /// Path of the manifest that was searched.
+        path: camino::Utf8PathBuf,
+        /// The requested profile name.
+        name: String,
+    },
+
+    /// A declared non-built-in profile has no `inherits` key.
+    #[error("profile `{name}` in manifest `{path}` must declare `inherits`")]
+    CustomProfileMissingInherits {
+        /// Path of the manifest declaring the profile.
+        path: camino::Utf8PathBuf,
+        /// The profile missing its `inherits` key.
+        name: String,
+    },
+
+    /// A profile's `inherits` names neither a built-in nor a declared profile.
+    #[error("profile `{profile}` in manifest `{path}` inherits from unknown profile `{inherits}`")]
+    UnknownInheritedProfile {
+        /// Path of the manifest declaring the profile.
+        path: camino::Utf8PathBuf,
+        /// The profile whose `inherits` value is unknown.
+        profile: String,
+        /// The unknown name the profile inherits from.
+        inherits: String,
+    },
+
+    /// Following `inherits` revisited a profile, so the chain never terminates.
+    #[error("profile `inherits` chain in manifest `{path}` forms a cycle: {}", chain.join(" -> "))]
+    ProfileInheritsCycle {
+        /// Path of the manifest declaring the profiles.
+        path: camino::Utf8PathBuf,
+        /// Profile names in traversal order, ending with the name that repeated.
+        chain: Vec<String>,
+    },
 }

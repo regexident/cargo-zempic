@@ -320,6 +320,212 @@ pub fn profile_tables(
     Ok(tables)
 }
 
+/// Resolve `name` to a profile with every setting carrying an effective value
+/// and the provenance of that value.
+///
+/// The `inherits` chain is walked from `name` toward the built-in it roots at,
+/// and the settings are then folded over the chain so that each takes the value
+/// from the nearest profile that sets it. A setting no profile in the chain sets
+/// falls back to the root built-in's [`builtin_defaults`].
+///
+/// # Errors
+///
+/// Returns [`crate::ZempicError::UnknownProfile`] when `name` is neither a
+/// built-in nor declared, [`crate::ZempicError::CustomProfileMissingInherits`]
+/// when a declared non-built-in profile omits `inherits`,
+/// [`crate::ZempicError::UnknownInheritedProfile`] when an `inherits` target is
+/// neither a built-in nor declared, and
+/// [`crate::ZempicError::ProfileInheritsCycle`] when the chain revisits a
+/// profile: [`crate::ZempicError`].
+pub fn resolve_profile(
+    manifest: &crate::manifest::ManifestDocument,
+    name: &str,
+) -> crate::Result<ResolvedProfile> {
+    let tables = profile_tables(manifest)?;
+    let path = manifest.path();
+
+    if BuiltinProfile::from_name(name).is_none() && !tables.contains_key(name) {
+        return Err(crate::ZempicError::UnknownProfile {
+            path: path.to_owned(),
+            name: name.to_owned(),
+        });
+    }
+
+    let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut traversal: Vec<String> = Vec::new();
+    let mut chain: Vec<&ProfileTable> = Vec::new();
+    let mut current = name.to_owned();
+
+    let root = loop {
+        if !visited.insert(current.clone()) {
+            traversal.push(current);
+
+            return Err(crate::ZempicError::ProfileInheritsCycle {
+                path: path.to_owned(),
+                chain: traversal,
+            });
+        }
+
+        let table = tables.get(&current);
+        if let Some(table) = table {
+            chain.push(table);
+        }
+
+        let parent = match (BuiltinProfile::from_name(&current), table) {
+            (_, Some(table)) if table.inherits.is_some() => table
+                .inherits
+                .clone()
+                .expect("the table declares an inherits target"),
+            (Some(builtin), _) => match builtin_parent(builtin) {
+                Some(parent) => parent.as_str().to_owned(),
+                None => {
+                    traversal.push(current);
+
+                    break builtin;
+                }
+            },
+            (None, None) | (None, Some(_)) => {
+                return Err(crate::ZempicError::CustomProfileMissingInherits {
+                    path: path.to_owned(),
+                    name: current,
+                });
+            }
+        };
+
+        if BuiltinProfile::from_name(&parent).is_none() && !tables.contains_key(&parent) {
+            return Err(crate::ZempicError::UnknownInheritedProfile {
+                path: path.to_owned(),
+                profile: current,
+                inherits: parent,
+            });
+        }
+
+        traversal.push(current);
+        current = parent;
+    };
+
+    let defaults = builtin_defaults(root);
+    let inherits_chain = traversal.into_iter().skip(1).collect();
+
+    Ok(ResolvedProfile {
+        name: name.to_owned(),
+        inherits_chain,
+        opt_level: resolve_setting(
+            &chain,
+            name,
+            &defaults,
+            |table| table.opt_level.as_ref(),
+            |defaults| &defaults.opt_level,
+        ),
+        lto: resolve_setting(
+            &chain,
+            name,
+            &defaults,
+            |table| table.lto.as_ref(),
+            |defaults| &defaults.lto,
+        ),
+        strip: resolve_setting(
+            &chain,
+            name,
+            &defaults,
+            |table| table.strip.as_ref(),
+            |defaults| &defaults.strip,
+        ),
+        panic: resolve_setting(
+            &chain,
+            name,
+            &defaults,
+            |table| table.panic.as_ref(),
+            |defaults| &defaults.panic,
+        ),
+        debug: resolve_setting(
+            &chain,
+            name,
+            &defaults,
+            |table| table.debug.as_ref(),
+            |defaults| &defaults.debug,
+        ),
+        codegen_units: resolve_setting(
+            &chain,
+            name,
+            &defaults,
+            |table| table.codegen_units.as_ref(),
+            |defaults| &defaults.codegen_units,
+        ),
+        incremental: resolve_setting(
+            &chain,
+            name,
+            &defaults,
+            |table| table.incremental.as_ref(),
+            |defaults| &defaults.incremental,
+        ),
+        debug_assertions: resolve_setting(
+            &chain,
+            name,
+            &defaults,
+            |table| table.debug_assertions.as_ref(),
+            |defaults| &defaults.debug_assertions,
+        ),
+        overflow_checks: resolve_setting(
+            &chain,
+            name,
+            &defaults,
+            |table| table.overflow_checks.as_ref(),
+            |defaults| &defaults.overflow_checks,
+        ),
+    })
+}
+
+/// The built-in a built-in profile tracks through its implicit chain.
+///
+/// Cargo models `test` as inheriting `dev` and `bench` as inheriting `release`,
+/// so walking one of them steps to the tracked built-in. The other two, and any
+/// built-in reached through the step, root the chain.
+fn builtin_parent(profile: BuiltinProfile) -> Option<BuiltinProfile> {
+    match profile {
+        BuiltinProfile::Dev | BuiltinProfile::Release => None,
+        BuiltinProfile::Test => Some(BuiltinProfile::Dev),
+        BuiltinProfile::Bench => Some(BuiltinProfile::Release),
+    }
+}
+
+/// Resolve one setting over the chain, taking the value from the nearest table
+/// that sets it and cargo's default otherwise.
+///
+/// `chain` runs from the analyzed profile's table to the nearest ancestor with a
+/// table, in that order, and `name` is the analyzed profile. A value read from
+/// `name`'s own table is [`Provenance::Explicit`], one read from an ancestor's
+/// table is [`Provenance::Inherited`], and [`Provenance::CargoDefault`] applies
+/// when no table sets the setting, in which case the root built-in's default
+/// value is taken from `defaults`.
+fn resolve_setting<T: Clone>(
+    chain: &[&ProfileTable],
+    name: &str,
+    defaults: &ResolvedProfile,
+    setting: impl Fn(&ProfileTable) -> Option<&(T, crate::manifest::KeySpan)>,
+    default: impl Fn(&ResolvedProfile) -> &Resolved<T>,
+) -> Resolved<T> {
+    for table in chain {
+        if let Some((value, key)) = setting(table) {
+            let provenance = if table.name == name {
+                Provenance::Explicit {
+                    profile: name.to_owned(),
+                    key: key.clone(),
+                }
+            } else {
+                Provenance::Inherited {
+                    from: table.name.clone(),
+                    key: key.clone(),
+                }
+            };
+
+            return Resolved::new(value.clone(), provenance);
+        }
+    }
+
+    Resolved::new_default(default(defaults).value.clone())
+}
+
 /// Reads the modelled settings of one profile table.
 ///
 /// Only settings that justify a rule are read; anything else in the table is
@@ -831,6 +1037,232 @@ mod tests {
                 assert_eq!(name, "my.profile");
             }
             other => panic!("expected ProfileName, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unset_keys_fall_back_to_cargo_defaults() {
+        let document = manifest("[package]\nname = \"demo\"\n");
+
+        let resolved = resolve_profile(&document, "release").unwrap();
+
+        assert_eq!(resolved, builtin_defaults(BuiltinProfile::Release));
+    }
+
+    #[test]
+    fn explicit_setting_is_marked_explicit() {
+        let document = manifest("[profile.release]\nlto = true\n");
+
+        let resolved = resolve_profile(&document, "release").unwrap();
+
+        assert_eq!(resolved.name, "release");
+        assert!(resolved.inherits_chain.is_empty());
+        assert_eq!(resolved.lto.value, Lto::Fat);
+        assert!(matches!(
+            resolved.lto.provenance,
+            Provenance::Explicit { ref profile, .. } if profile == "release"
+        ));
+        assert!(resolved.strip.is_cargo_default());
+    }
+
+    #[test]
+    fn single_inherits_marks_the_parent_as_source() {
+        let document = manifest(
+            "[profile.fast]\ninherits = \"release\"\nlto = true\n[profile.custom]\ninherits = \"fast\"\n",
+        );
+
+        let resolved = resolve_profile(&document, "custom").unwrap();
+
+        assert_eq!(resolved.name, "custom");
+        assert_eq!(resolved.inherits_chain, vec!["fast", "release"]);
+        assert_eq!(resolved.lto.value, Lto::Fat);
+        assert!(matches!(
+            resolved.lto.provenance,
+            Provenance::Inherited { ref from, .. } if from == "fast"
+        ));
+        assert_eq!(resolved.opt_level.value, OptLevel::Three);
+        assert!(resolved.opt_level.is_cargo_default());
+    }
+
+    #[test]
+    fn two_level_chain_attributes_each_setting_to_its_nearest_source() {
+        let document = manifest(
+            "[profile.root]\ninherits = \"release\"\nstrip = true\n\
+             [profile.middle]\ninherits = \"root\"\nlto = true\n\
+             [profile.leaf]\ninherits = \"middle\"\npanic = \"abort\"\n",
+        );
+
+        let resolved = resolve_profile(&document, "leaf").unwrap();
+
+        assert_eq!(resolved.name, "leaf");
+        assert_eq!(resolved.inherits_chain, vec!["middle", "root", "release"]);
+        assert!(matches!(
+            resolved.panic.provenance,
+            Provenance::Explicit { ref profile, .. } if profile == "leaf"
+        ));
+        assert!(matches!(
+            resolved.lto.provenance,
+            Provenance::Inherited { ref from, .. } if from == "middle"
+        ));
+        assert!(matches!(
+            resolved.strip.provenance,
+            Provenance::Inherited { ref from, .. } if from == "root"
+        ));
+        assert_eq!(resolved.opt_level.value, OptLevel::Three);
+        assert!(resolved.opt_level.is_cargo_default());
+    }
+
+    #[test]
+    fn custom_profile_name_resolves_through_its_chain() {
+        let document = manifest("[profile.tuned]\ninherits = \"release\"\nlto = \"thin\"\n");
+
+        let resolved = resolve_profile(&document, "tuned").unwrap();
+
+        assert_eq!(resolved.name, "tuned");
+        assert_eq!(resolved.inherits_chain, vec!["release"]);
+        assert_eq!(resolved.lto.value, Lto::Thin);
+        assert!(matches!(
+            resolved.lto.provenance,
+            Provenance::Explicit { ref profile, .. } if profile == "tuned"
+        ));
+        assert_eq!(resolved.opt_level.value, OptLevel::Three);
+        assert!(resolved.opt_level.is_cargo_default());
+    }
+
+    #[test]
+    fn inherits_cycle_is_an_error() {
+        let document = manifest(
+            "[profile.first]\ninherits = \"second\"\n[profile.second]\ninherits = \"first\"\n",
+        );
+
+        let error = resolve_profile(&document, "first").unwrap_err();
+
+        match error {
+            crate::ZempicError::ProfileInheritsCycle { path, chain } => {
+                assert_eq!(path, camino::Utf8PathBuf::from("Cargo.toml"));
+                assert_eq!(chain, vec!["first", "second", "first"]);
+            }
+            other => panic!("expected ProfileInheritsCycle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_requested_profile_is_an_error() {
+        let document = manifest("[package]\nname = \"demo\"\n");
+
+        let error = resolve_profile(&document, "mystery").unwrap_err();
+
+        match error {
+            crate::ZempicError::UnknownProfile { path, name } => {
+                assert_eq!(path, camino::Utf8PathBuf::from("Cargo.toml"));
+                assert_eq!(name, "mystery");
+            }
+            other => panic!("expected UnknownProfile, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_inherits_target_is_an_error() {
+        let document = manifest("[profile.custom]\ninherits = \"nowhere\"\n");
+
+        let error = resolve_profile(&document, "custom").unwrap_err();
+
+        match error {
+            crate::ZempicError::UnknownInheritedProfile {
+                path,
+                profile,
+                inherits,
+            } => {
+                assert_eq!(path, camino::Utf8PathBuf::from("Cargo.toml"));
+                assert_eq!(profile, "custom");
+                assert_eq!(inherits, "nowhere");
+            }
+            other => panic!("expected UnknownInheritedProfile, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_profile_without_inherits_is_an_error() {
+        let document = manifest("[profile.shortcut]\nlto = true\n");
+
+        let error = resolve_profile(&document, "shortcut").unwrap_err();
+
+        match error {
+            crate::ZempicError::CustomProfileMissingInherits { path, name } => {
+                assert_eq!(path, camino::Utf8PathBuf::from("Cargo.toml"));
+                assert_eq!(name, "shortcut");
+            }
+            other => panic!("expected CustomProfileMissingInherits, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inherits_may_name_a_builtin_without_a_table() {
+        let document = manifest("[profile.tuned]\ninherits = \"release\"\nlto = \"thin\"\n");
+
+        let resolved = resolve_profile(&document, "tuned").unwrap();
+
+        assert_eq!(resolved.inherits_chain, vec!["release"]);
+        assert_eq!(resolved.opt_level.value, OptLevel::Three);
+        assert_eq!(resolved.opt_level.provenance, Provenance::CargoDefault);
+    }
+
+    #[test]
+    fn builtin_tracking_marks_the_tracked_table_as_inherited() {
+        let document = manifest("[profile.dev]\nlto = \"thin\"\n");
+
+        let resolved = resolve_profile(&document, "test").unwrap();
+
+        assert_eq!(resolved.inherits_chain, vec!["dev"]);
+        assert_eq!(resolved.lto.value, Lto::Thin);
+        assert!(matches!(
+            resolved.lto.provenance,
+            Provenance::Inherited { ref from, .. } if from == "dev"
+        ));
+    }
+
+    #[test]
+    fn builtin_bench_tracks_release_table_as_inherited() {
+        let document = manifest("[profile.release]\nlto = true\n");
+
+        let resolved = resolve_profile(&document, "bench").unwrap();
+
+        assert_eq!(resolved.inherits_chain, vec!["release"]);
+        assert_eq!(resolved.lto.value, Lto::Fat);
+        assert!(matches!(
+            resolved.lto.provenance,
+            Provenance::Inherited { ref from, .. } if from == "release"
+        ));
+    }
+
+    #[test]
+    fn builtin_table_may_declare_its_own_inherits() {
+        let document = manifest("[profile.release]\ninherits = \"dev\"\nlto = \"thin\"\n");
+
+        let resolved = resolve_profile(&document, "release").unwrap();
+
+        assert_eq!(resolved.inherits_chain, vec!["dev"]);
+        assert_eq!(resolved.lto.value, Lto::Thin);
+        assert!(matches!(
+            resolved.lto.provenance,
+            Provenance::Explicit { ref profile, .. } if profile == "release"
+        ));
+        assert_eq!(resolved.opt_level.value, OptLevel::Zero);
+        assert_eq!(resolved.opt_level.provenance, Provenance::CargoDefault);
+    }
+
+    #[test]
+    fn builtin_declaring_itself_as_inherits_is_a_cycle() {
+        let document = manifest("[profile.dev]\ninherits = \"dev\"\n");
+
+        let error = resolve_profile(&document, "dev").unwrap_err();
+
+        match error {
+            crate::ZempicError::ProfileInheritsCycle { path, chain } => {
+                assert_eq!(path, camino::Utf8PathBuf::from("Cargo.toml"));
+                assert_eq!(chain, vec!["dev", "dev"]);
+            }
+            other => panic!("expected ProfileInheritsCycle, got {other:?}"),
         }
     }
 }
