@@ -1,5 +1,6 @@
 use cargo_zempic::ZempicError;
 use cargo_zempic::manifest::{KeySpan, ManifestDocument};
+use cargo_zempic::workspace::host_target_triple;
 
 mod common;
 
@@ -105,4 +106,19 @@ fn materialized_roots_are_distinct_between_calls() {
     let second = common::Fixture::new("multi-member").materialize();
 
     assert_ne!(first.root(), second.root());
+}
+
+#[test]
+fn host_target_triple_matches_rustc() {
+    let output = std::process::Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let expected = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .unwrap();
+
+    assert_eq!(host_target_triple().unwrap(), expected);
 }

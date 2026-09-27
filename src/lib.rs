@@ -7,6 +7,7 @@
 
 pub mod manifest;
 pub mod profile;
+pub mod workspace;
 
 /// The result type used throughout the crate, carrying [`ZempicError`].
 pub type Result<T> = std::result::Result<T, ZempicError>;
@@ -88,5 +89,19 @@ pub enum ZempicError {
         path: camino::Utf8PathBuf,
         /// Profile names in traversal order, ending with the name that repeated.
         chain: Vec<String>,
+    },
+
+    /// Resolving the package graph through `cargo metadata` failed.
+    #[error("failed to resolve cargo metadata: {source}")]
+    Metadata {
+        /// Underlying `cargo metadata` failure.
+        source: cargo_metadata::Error,
+    },
+
+    /// The host target triple could not be read from `rustc -vV`.
+    #[error("could not determine the host target triple: {detail}")]
+    HostTripleUnavailable {
+        /// What prevented reading the triple.
+        detail: String,
     },
 }
