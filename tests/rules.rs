@@ -1,6 +1,8 @@
 use cargo_zempic::ZempicError;
 use cargo_zempic::manifest::{KeySpan, ManifestDocument};
-use cargo_zempic::workspace::host_target_triple;
+use cargo_zempic::workspace::{
+    MetadataQuery, PackageSelection, host_target_triple, load_metadata, select_packages,
+};
 
 mod common;
 
@@ -121,4 +123,147 @@ fn host_target_triple_matches_rustc() {
         .unwrap();
 
     assert_eq!(host_target_triple().unwrap(), expected);
+}
+
+/// Loads metadata for the `default-members` fixture, whose resolved default
+/// member list is `["alpha"]` while its full member list is `["alpha", "beta"]`.
+fn default_members_metadata() -> (common::MaterializedWorkspace, cargo_metadata::Metadata) {
+    let workspace = common::Fixture::new("default-members").materialize();
+
+    let query = MetadataQuery {
+        manifest_path: Some(workspace.manifest_path()),
+        ..MetadataQuery::default()
+    };
+
+    let metadata = load_metadata(&query).unwrap();
+
+    (workspace, metadata)
+}
+
+/// Collects the names of selected packages in the order they were returned.
+fn selected_names(packages: &[&cargo_metadata::Package]) -> Vec<String> {
+    packages
+        .iter()
+        .map(|package| package.name.to_string())
+        .collect()
+}
+
+#[test]
+fn default_selection_uses_workspace_default_members() {
+    let (_workspace, metadata) = default_members_metadata();
+
+    let selected =
+        select_packages(&metadata, &PackageSelection::default()).expect("selection succeeds");
+
+    assert_eq!(selected_names(&selected), ["alpha"]);
+}
+
+#[test]
+fn workspace_flag_selects_every_member() {
+    let (_workspace, metadata) = default_members_metadata();
+
+    let selection = PackageSelection {
+        workspace: true,
+        ..PackageSelection::default()
+    };
+
+    let selected = select_packages(&metadata, &selection).expect("selection succeeds");
+
+    assert_eq!(selected_names(&selected), ["alpha", "beta"]);
+}
+
+#[test]
+fn package_flag_selects_named_members() {
+    let (_workspace, metadata) = default_members_metadata();
+
+    let selection = PackageSelection {
+        packages: vec!["beta".to_owned()],
+        ..PackageSelection::default()
+    };
+
+    let selected = select_packages(&metadata, &selection).expect("selection succeeds");
+
+    assert_eq!(selected_names(&selected), ["beta"]);
+}
+
+#[test]
+fn exclude_removes_members_under_workspace() {
+    let (_workspace, metadata) = default_members_metadata();
+
+    let selection = PackageSelection {
+        workspace: true,
+        exclude: vec!["beta".to_owned()],
+        ..PackageSelection::default()
+    };
+
+    let selected = select_packages(&metadata, &selection).expect("selection succeeds");
+
+    assert_eq!(selected_names(&selected), ["alpha"]);
+}
+
+#[test]
+fn exclude_without_workspace_is_an_error() {
+    let (_workspace, metadata) = default_members_metadata();
+
+    let selection = PackageSelection {
+        exclude: vec!["beta".to_owned()],
+        ..PackageSelection::default()
+    };
+
+    let error = select_packages(&metadata, &selection).unwrap_err();
+
+    assert!(
+        matches!(error, ZempicError::ExcludeWithoutWorkspace),
+        "{error}"
+    );
+}
+
+#[test]
+fn unknown_package_spec_is_an_error() {
+    let (_workspace, metadata) = default_members_metadata();
+
+    let selection = PackageSelection {
+        packages: vec!["gamma".to_owned()],
+        ..PackageSelection::default()
+    };
+
+    let error = select_packages(&metadata, &selection).unwrap_err();
+
+    match error {
+        ZempicError::UnknownPackage { spec } => assert_eq!(spec, "gamma"),
+        other => panic!("expected an unknown-package error, got: {other}"),
+    }
+}
+
+#[test]
+fn unknown_package_spec_is_an_error_even_under_workspace() {
+    let (_workspace, metadata) = default_members_metadata();
+
+    let selection = PackageSelection {
+        workspace: true,
+        packages: vec!["gamma".to_owned()],
+        ..PackageSelection::default()
+    };
+
+    let error = select_packages(&metadata, &selection).unwrap_err();
+
+    match error {
+        ZempicError::UnknownPackage { spec } => assert_eq!(spec, "gamma"),
+        other => panic!("expected an unknown-package error, got: {other}"),
+    }
+}
+
+#[test]
+fn selection_is_ordered_by_name() {
+    let (_workspace, metadata) = default_members_metadata();
+
+    let selection = PackageSelection {
+        workspace: true,
+        ..PackageSelection::default()
+    };
+
+    let selected = select_packages(&metadata, &selection).expect("selection succeeds");
+
+    assert_eq!(selected_names(&selected), ["alpha", "beta"]);
+    assert!(selected[0].name < selected[1].name);
 }

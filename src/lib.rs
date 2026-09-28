@@ -104,4 +104,15 @@ pub enum ZempicError {
         /// What prevented reading the triple.
         detail: String,
     },
+
+    /// `--exclude` was given without `--workspace`.
+    #[error("`--exclude` requires `--workspace`")]
+    ExcludeWithoutWorkspace,
+
+    /// A `--package` or `--exclude` spec names no workspace member.
+    #[error("package `{spec}` is not a member of the workspace")]
+    UnknownPackage {
+        /// The spec that matched no workspace member.
+        spec: String,
+    },
 }

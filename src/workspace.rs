@@ -93,6 +93,106 @@ pub fn load_metadata(query: &MetadataQuery) -> crate::Result<Metadata> {
         .map_err(|source| crate::ZempicError::Metadata { source })
 }
 
+/// The workspace members a run should analyze.
+///
+/// Mirrors cargo's `-p/--package`, `--workspace` and `--exclude` surface: an
+/// empty `packages` list with `workspace` unset falls back to the workspace's
+/// default members.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PackageSelection {
+    /// Package specs named by `-p/--package`, matched against package names.
+    pub packages: Vec<String>,
+    /// Whether `--workspace`/`--all` selects every workspace member.
+    pub workspace: bool,
+    /// Package specs named by `--exclude`.
+    pub exclude: Vec<String>,
+}
+
+/// Resolves a selection to workspace packages, ordered by name.
+///
+/// When `selection.workspace` is set, every workspace member is a candidate;
+/// otherwise the named `selection.packages` are, or the workspace default
+/// members when no names are given. `selection.exclude` is only meaningful
+/// alongside `--workspace`, matching cargo's own argument contract. Every spec
+/// must name a workspace member: cargo's richer package-spec grammar is not
+/// interpreted, so a spec that carries a version, source or path qualifier is
+/// reported as unknown rather than partially matched.
+pub fn select_packages<'a>(
+    metadata: &'a cargo_metadata::Metadata,
+    selection: &PackageSelection,
+) -> crate::Result<Vec<&'a cargo_metadata::Package>> {
+    if !selection.exclude.is_empty() && !selection.workspace {
+        return Err(crate::ZempicError::ExcludeWithoutWorkspace);
+    }
+
+    let members: Vec<&cargo_metadata::Package> = metadata
+        .packages
+        .iter()
+        .filter(|package| metadata.workspace_members.contains(&package.id))
+        .collect();
+
+    let named: Vec<&cargo_metadata::Package> = selection
+        .packages
+        .iter()
+        .map(|spec| resolve_member(&members, spec))
+        .collect::<crate::Result<_>>()?;
+
+    let candidates: Vec<&cargo_metadata::Package> = if selection.workspace {
+        members.clone()
+    } else if named.is_empty() {
+        members
+            .iter()
+            .filter(|package| metadata.workspace_default_members.contains(&package.id))
+            .copied()
+            .collect()
+    } else {
+        named
+    };
+
+    let mut selected = Vec::new();
+    for package in candidates {
+        let excluded = selection
+            .exclude
+            .iter()
+            .any(|spec| package.name.as_ref() == spec);
+        if !excluded {
+            selected.push(package);
+        }
+    }
+
+    for spec in &selection.exclude {
+        resolve_member(&members, spec)?;
+    }
+
+    selected.sort_by(|left, right| left.name.as_ref().cmp(right.name.as_ref()));
+
+    Ok(selected)
+}
+
+/// Finds the workspace member a spec names exactly.
+///
+/// Only the package name is matched; a spec that carries any qualifier (`@`,
+/// `:` or `/`) names cargo's broader package-spec grammar, which this crate
+/// deliberately does not interpret.
+fn resolve_member<'a>(
+    members: &[&'a cargo_metadata::Package],
+    spec: &str,
+) -> crate::Result<&'a cargo_metadata::Package> {
+    if spec.contains(['@', ':', '/']) {
+        return Err(crate::ZempicError::UnknownPackage {
+            spec: spec.to_owned(),
+        });
+    }
+
+    members
+        .iter()
+        .copied()
+        .find(|package| package.name.as_ref() == spec)
+        .ok_or_else(|| crate::ZempicError::UnknownPackage {
+            spec: spec.to_owned(),
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{FeatureSelection, MetadataQuery, metadata_command};
