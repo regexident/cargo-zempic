@@ -1,0 +1,2 @@
+[workspace]
+members = ["exe", "plain-lib", "shared", "macros", "mixed", "with-aux"]
