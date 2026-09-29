@@ -1,7 +1,8 @@
 use cargo_zempic::ZempicError;
 use cargo_zempic::manifest::{KeySpan, ManifestDocument};
 use cargo_zempic::workspace::{
-    MetadataQuery, PackageSelection, host_target_triple, load_metadata, select_packages,
+    ArtifactKind, MetadataQuery, PackageSelection, classify_package, host_target_triple,
+    load_metadata, select_packages,
 };
 
 mod common;
@@ -266,4 +267,156 @@ fn selection_is_ordered_by_name() {
 
     assert_eq!(selected_names(&selected), ["alpha", "beta"]);
     assert!(selected[0].name < selected[1].name);
+}
+
+/// Loads metadata for the `crate-types` fixture, whose members cover each
+/// target shape a `[lib]` or `[[bin]]` table can produce.
+fn crate_types_metadata() -> (common::MaterializedWorkspace, cargo_metadata::Metadata) {
+    let workspace = common::Fixture::new("crate-types").materialize();
+
+    let query = MetadataQuery {
+        manifest_path: Some(workspace.manifest_path()),
+        ..MetadataQuery::default()
+    };
+
+    let metadata = load_metadata(&query).unwrap();
+
+    (workspace, metadata)
+}
+
+/// Finds the named package in `metadata`'s resolved package list.
+fn package<'a>(metadata: &'a cargo_metadata::Metadata, name: &str) -> &'a cargo_metadata::Package {
+    metadata
+        .packages
+        .iter()
+        .find(|package| package.name.as_ref() == name)
+        .unwrap_or_else(|| panic!("package `{name}` is missing from the metadata"))
+}
+
+#[test]
+fn bin_package_produces_a_linked_artifact() {
+    let (_workspace, metadata) = crate_types_metadata();
+
+    let classification = classify_package(package(&metadata, "exe"));
+
+    assert!(classification.produces_linked_artifact());
+
+    let linked: Vec<&str> = classification
+        .linked_targets()
+        .map(|target| target.name.as_str())
+        .collect();
+
+    assert_eq!(linked, ["exe"]);
+}
+
+#[test]
+fn lib_only_package_produces_no_linked_artifact() {
+    let (_workspace, metadata) = crate_types_metadata();
+
+    let classification = classify_package(package(&metadata, "plain-lib"));
+
+    assert!(!classification.produces_linked_artifact());
+    assert_eq!(classification.targets.len(), 1);
+    assert_eq!(classification.targets[0].artifact, ArtifactKind::Unlinked);
+}
+
+#[test]
+fn cdylib_package_produces_a_linked_artifact() {
+    let (_workspace, metadata) = crate_types_metadata();
+
+    let classification = classify_package(package(&metadata, "shared"));
+
+    assert!(classification.produces_linked_artifact());
+}
+
+#[test]
+fn proc_macro_package_produces_no_linked_artifact() {
+    let (_workspace, metadata) = crate_types_metadata();
+
+    let classification = classify_package(package(&metadata, "macros"));
+
+    assert!(!classification.produces_linked_artifact());
+}
+
+#[test]
+fn mixed_package_is_linked_and_names_its_bin_target() {
+    let (_workspace, metadata) = crate_types_metadata();
+
+    let classification = classify_package(package(&metadata, "mixed"));
+
+    assert!(classification.produces_linked_artifact());
+
+    let linked: Vec<&str> = classification
+        .linked_targets()
+        .map(|target| target.name.as_str())
+        .collect();
+
+    assert_eq!(linked, ["mixed"]);
+}
+
+#[test]
+fn test_and_build_targets_are_omitted_from_classification() {
+    let (_workspace, metadata) = crate_types_metadata();
+
+    let source = package(&metadata, "with-aux");
+
+    // The fixture package declares enough targets that cargo reports a
+    // `custom-build` target for its build script and one `test`, `bench` and
+    // `example` target. Without them the omission rule would be untested.
+    let auxiliaries: Vec<&str> = source
+        .targets
+        .iter()
+        .filter(|target| target.kind.iter().any(is_auxiliary_kind))
+        .map(|target| target.name.as_str())
+        .collect();
+
+    assert_eq!(
+        auxiliaries.len(),
+        4,
+        "fixture must expose one target of each auxiliary kind: {auxiliaries:?}"
+    );
+
+    let classification = classify_package(source);
+    let retained: Vec<&str> = classification
+        .targets
+        .iter()
+        .map(|target| target.name.as_str())
+        .collect();
+
+    // The auxiliary targets are omitted while the package's linked and
+    // unlinked targets survive, which fails if the omission rule reports
+    // an auxiliary kind as classifiable.
+    assert_eq!(retained, ["with_aux", "with-aux"]);
+
+    for name in auxiliaries {
+        assert!(
+            !classification
+                .targets
+                .iter()
+                .any(|target| target.name == name),
+            "`{name}` should not survive classification: {retained:?}"
+        );
+    }
+
+    assert!(
+        !classification
+            .targets
+            .iter()
+            .any(|target| target.kinds.iter().any(is_auxiliary_kind)),
+        "a retained target must not carry an auxiliary kind"
+    );
+}
+
+/// Whether a kind marks a target the analyzed profile never governs.
+///
+/// Mirrors the classifier's own predicate so the fixture assertion fails when
+/// the production rule stops recognizing an auxiliary kind.
+fn is_auxiliary_kind(kind: &cargo_metadata::TargetKind) -> bool {
+    matches!(
+        kind,
+        cargo_metadata::TargetKind::Test
+            | cargo_metadata::TargetKind::Bench
+            | cargo_metadata::TargetKind::Example
+            | cargo_metadata::TargetKind::CustomBuild
+    )
 }
