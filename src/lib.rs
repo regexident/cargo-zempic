@@ -5,6 +5,7 @@
 //! downstream callers can work with typed results rather than rendered text.
 //! Rendering and exit-code mapping live in the binary target.
 
+pub mod cli;
 pub mod dimension;
 pub mod manifest;
 pub mod profile;
