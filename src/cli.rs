@@ -8,6 +8,8 @@ use crate::{AnalysisConfig, dimension::Dimension, workspace};
 use clap::Parser;
 use clap::builder::TypedValueParser;
 
+pub mod reject;
+
 /// Builds the parser for `-O/--optimize-for`, restricting a value to the
 /// dimensions the crate implements.
 ///
@@ -114,6 +116,23 @@ pub struct AnalysisArgs {
     /// The target triple to resolve for, or the host's when unset.
     #[arg(long = "target", value_name = "TRIPLE")]
     pub target: Option<String>,
+
+    /// Cargo's target-selection flags, declared only to be rejected.
+    #[command(flatten)]
+    pub rejected: reject::RejectedTargetArgs,
+}
+
+/// Reject an invocation that selected a target-selection flag.
+///
+/// Returns the diagnostic rejecting the first target-selection flag present, or
+/// `Ok(())` when the invocation carries none. The conversion into an
+/// [`AnalysisConfig`] ignores the rejected flags entirely, so this is the only
+/// gate that stops one from reaching the analysis.
+pub fn validate(args: &AnalysisArgs) -> Result<(), String> {
+    match reject::rejected_flag(&args.rejected) {
+        Some(flag) => Err(reject::diagnostic(flag)),
+        None => Ok(()),
+    }
 }
 
 impl From<&AnalysisArgs> for AnalysisConfig {
@@ -142,6 +161,20 @@ mod tests {
     use super::{AnalysisArgs, Args, Command};
     use crate::{AnalysisConfig, dimension::Dimension, workspace};
     use clap::Parser;
+
+    /// The nine target-selection flags with the value each takes, or `None` for
+    /// a flag that is a plain boolean.
+    const REJECTED_FLAGS: [(&str, Option<&str>); 9] = [
+        ("--bin", Some("foo")),
+        ("--bins", None),
+        ("--example", Some("foo")),
+        ("--examples", None),
+        ("--bench", Some("foo")),
+        ("--benches", None),
+        ("--test", Some("foo")),
+        ("--tests", None),
+        ("--all-targets", None),
+    ];
 
     /// The analysis arguments a parsed invocation selected.
     fn analysis(args: &Args) -> &AnalysisArgs {
@@ -260,5 +293,54 @@ mod tests {
                 target: Some("x86_64-unknown-linux-gnu".to_owned()),
             }
         );
+    }
+
+    #[test]
+    fn each_rejected_flag_parses_rather_than_erroring_in_clap() {
+        for (flag, value) in REJECTED_FLAGS {
+            let mut argv = vec!["cargo-zempic", "check", flag];
+
+            if let Some(value) = value {
+                argv.push(value);
+            }
+
+            let parsed = Args::try_parse_from(argv);
+
+            assert!(
+                parsed.is_ok(),
+                "`{flag}` must parse so validation owns its rejection"
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_flag_fails_validation_with_the_specific_diagnostic() {
+        let args = Args::try_parse_from(["cargo-zempic", "check", "--bin", "foo"])
+            .expect("the rejected flag parses");
+
+        let error =
+            super::validate(analysis(&args)).expect_err("the rejected flag fails validation");
+
+        assert!(
+            error.starts_with("error: `--bin` is not supported\n"),
+            "the diagnostic names the flag, got: {error:?}"
+        );
+    }
+
+    #[test]
+    fn rejected_flag_diagnostic_explains_per_package_narrowing() {
+        let error = super::reject::diagnostic("--all-targets");
+
+        assert!(
+            error.contains("per-package, not per-target. Use `--package` to narrow the analysis."),
+            "the diagnostic explains the narrowing, got: {error:?}"
+        );
+    }
+
+    #[test]
+    fn an_invocation_without_rejected_flags_validates() {
+        let args = Args::try_parse_from(["cargo-zempic", "check"]).expect("a plain check parses");
+
+        assert!(super::validate(analysis(&args)).is_ok());
     }
 }
