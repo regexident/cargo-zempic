@@ -359,6 +359,21 @@ mod tests {
     }
 
     #[test]
+    fn filter_platform_prefers_the_query_target_over_the_host_triple() {
+        let query = MetadataQuery {
+            target: Some("aarch64-unknown-linux-gnu".to_owned()),
+            ..MetadataQuery::default()
+        };
+
+        let args = args_of(&query);
+
+        assert_eq!(
+            args[args.len() - 2..],
+            ["--filter-platform", "aarch64-unknown-linux-gnu"]
+        );
+    }
+
+    #[test]
     fn feature_list_is_passed_as_a_comma_separated_value() {
         let query = MetadataQuery {
             features: FeatureSelection {

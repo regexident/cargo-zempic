@@ -1,9 +1,10 @@
-use cargo_zempic::ZempicError;
+use cargo_zempic::dimension::Dimension;
 use cargo_zempic::manifest::{KeySpan, ManifestDocument};
 use cargo_zempic::workspace::{
-    ArtifactKind, MetadataQuery, PackageSelection, classify_package, host_target_triple,
-    load_metadata, select_packages,
+    ArtifactKind, FeatureSelection, MetadataQuery, PackageSelection, classify_package,
+    host_target_triple, load_metadata, select_packages,
 };
+use cargo_zempic::{AnalysisConfig, Resolution, ZempicError, resolve};
 
 mod common;
 
@@ -419,4 +420,224 @@ fn is_auxiliary_kind(kind: &cargo_metadata::TargetKind) -> bool {
             | cargo_metadata::TargetKind::Example
             | cargo_metadata::TargetKind::CustomBuild
     )
+}
+
+/// The analysis configuration a test resolves a workspace with.
+///
+/// Names the fixture's root manifest so resolution never picks up the crate's
+/// own workspace, and defaults every other field so a test states only the
+/// choice it exercises.
+fn analysis_config(workspace: &common::MaterializedWorkspace) -> AnalysisConfig {
+    AnalysisConfig {
+        dimensions: Vec::new(),
+        manifest_path: Some(workspace.manifest_path()),
+        selection: PackageSelection::default(),
+        profile: "release".to_owned(),
+        features: FeatureSelection::default(),
+        target: None,
+    }
+}
+
+/// Canonicalizes `path` so it can be compared with a path cargo reports, which
+/// resolves symlinks such as `/var` to `/private/var`.
+fn canonical(path: &camino::Utf8Path) -> camino::Utf8PathBuf {
+    let resolved = std::fs::canonicalize(path).expect("path exists");
+
+    camino::Utf8PathBuf::from_path_buf(resolved).expect("path is not UTF-8")
+}
+
+#[test]
+fn resolution_reports_the_workspace_root_and_member_count() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    let resolution = resolve(&analysis_config(&workspace)).expect("resolution succeeds");
+
+    assert_eq!(
+        canonical(&resolution.workspace_root),
+        canonical(workspace.root())
+    );
+    assert_eq!(resolution.member_count, 2);
+    assert_eq!(resolution.selected.len(), 2);
+}
+
+/// The names of `resolution`'s selected packages whose classification reports a
+/// profile-governed artifact, in the order the selection returned them.
+fn linked_selection_names(resolution: &Resolution) -> Vec<&str> {
+    resolution
+        .selected
+        .iter()
+        .filter(|package| package.classification.produces_linked_artifact())
+        .map(|package| package.name.as_str())
+        .collect()
+}
+
+/// The names of `resolution`'s selected packages whose classification reports no
+/// profile-governed artifact, in the order the selection returned them.
+fn unlinked_selection_names(resolution: &Resolution) -> Vec<&str> {
+    resolution
+        .selected
+        .iter()
+        .filter(|package| !package.classification.produces_linked_artifact())
+        .map(|package| package.name.as_str())
+        .collect()
+}
+
+#[test]
+fn resolution_reports_the_requested_target_triple() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+    let requested = "aarch64-unknown-linux-gnu".to_owned();
+    let mut config = analysis_config(&workspace);
+    config.target = Some(requested.clone());
+
+    let resolution = resolve(&config).expect("resolution succeeds");
+
+    // An explicit non-host `config.target` must surface as the resolved triple
+    // rather than being replaced by the host's, which would misreport the
+    // platform the analysis runs against.
+    assert_eq!(resolution.target_triple, requested);
+}
+
+#[test]
+fn resolution_classifies_each_selected_package() {
+    let workspace = common::Fixture::new("crate-types").materialize();
+    let mut config = analysis_config(&workspace);
+    config.selection.workspace = true;
+
+    let resolution = resolve(&config).expect("resolution succeeds");
+
+    // Every workspace member is selected, and each selected package carries the
+    // classification of its own targets rather than being lumped together.
+    let names: Vec<&str> = resolution
+        .selected
+        .iter()
+        .map(|package| package.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["exe", "macros", "mixed", "plain-lib", "shared", "with-aux"]
+    );
+
+    // The fixture's `exe` and `shared` members emit artifacts the analyzed
+    // profile governs while `plain-lib` and `macros` do not, which fails if a
+    // selected package is misclassified or dropped from the result.
+    let linked = linked_selection_names(&resolution);
+    let unlinked = unlinked_selection_names(&resolution);
+
+    assert!(linked.contains(&"exe"), "linked: {linked:?}");
+    assert!(linked.contains(&"shared"), "linked: {linked:?}");
+    assert!(!linked.contains(&"plain-lib"), "linked: {linked:?}");
+    assert!(!linked.contains(&"macros"), "linked: {linked:?}");
+    assert!(unlinked.contains(&"plain-lib"), "unlinked: {unlinked:?}");
+    assert!(unlinked.contains(&"macros"), "unlinked: {unlinked:?}");
+
+    for name in ["exe", "plain-lib", "macros", "shared"] {
+        let package = resolution
+            .selected
+            .iter()
+            .find(|package| package.name == name)
+            .unwrap_or_else(|| panic!("`{name}` should be selected: {names:?}"));
+
+        assert_eq!(package.classification.name, name);
+    }
+}
+
+#[test]
+fn resolution_reads_the_profile_from_the_workspace_root() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    // The workspace root declares the only profile table in the fixture, so a
+    // resolution that surfaced it read the root manifest.
+    let root_manifest = concat!(
+        "[workspace]\n",
+        "members = [\"alpha\", \"beta\"]\n\n",
+        "[profile.release]\n",
+        "lto = \"fat\"\n",
+    );
+    std::fs::write(workspace.root().join("Cargo.toml"), root_manifest).unwrap();
+
+    let resolution = resolve(&analysis_config(&workspace)).expect("resolution succeeds");
+
+    assert_eq!(resolution.profile.name, "release");
+    assert!(resolution.profile.lto.is_explicit());
+    assert_eq!(
+        resolution.profile.lto.value,
+        cargo_zempic::profile::Lto::Fat
+    );
+}
+
+#[test]
+fn resolution_ignores_a_member_profile_table() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    // A member's profile table is inert to cargo, so resolution must report the
+    // built-in default rather than the value the member declares.
+    let root_manifest = "[workspace]\nmembers = [\"alpha\", \"beta\"]\n";
+    std::fs::write(workspace.root().join("Cargo.toml"), root_manifest).unwrap();
+
+    let member_manifest = concat!(
+        "[package]\n",
+        "name = \"alpha\"\n",
+        "version = \"0.1.0\"\n",
+        "edition = \"2021\"\n\n",
+        "[[bin]]\n",
+        "name = \"alpha\"\n",
+        "path = \"src/main.rs\"\n\n",
+        "[profile.release]\n",
+        "lto = \"fat\"\n",
+    );
+    std::fs::write(workspace.root().join("alpha/Cargo.toml"), member_manifest).unwrap();
+
+    let resolution = resolve(&analysis_config(&workspace)).expect("resolution succeeds");
+
+    assert_eq!(resolution.profile.name, "release");
+    assert!(resolution.profile.lto.is_cargo_default());
+    assert_eq!(
+        resolution.profile.lto.value,
+        cargo_zempic::profile::Lto::Off
+    );
+}
+
+#[test]
+fn resolution_defaults_to_the_size_dimension() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    let resolution = resolve(&analysis_config(&workspace)).expect("resolution succeeds");
+
+    assert_eq!(resolution.dimensions, [Dimension::Size]);
+}
+
+#[test]
+fn resolution_defaults_to_the_release_profile_when_requested() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+    let mut config = analysis_config(&workspace);
+    config.profile = "release".to_owned();
+
+    let resolution = resolve(&config).expect("resolution succeeds");
+
+    assert_eq!(resolution.profile.name, "release");
+    assert_eq!(resolution.member_count, 2);
+}
+
+#[test]
+fn resolution_fails_on_an_unparseable_root_manifest() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    let root_manifest = workspace.root().join("Cargo.toml");
+    std::fs::write(&root_manifest, "not valid toml =").unwrap();
+
+    let error = resolve(&analysis_config(&workspace)).unwrap_err();
+
+    // `cargo metadata` and the manifest reader both name the offending file, so
+    // the assertion holds whichever rejects the broken manifest.
+    assert!(
+        error.to_string().contains("Cargo.toml"),
+        "error must name the offending manifest: {error}"
+    );
+}
+
+/// The `Resolution` type carries the analyzed workspace's root so a caller can
+/// report where the analysis ran.
+#[allow(dead_code)]
+fn resolution_root_of(resolution: &Resolution) -> &camino::Utf8Path {
+    &resolution.workspace_root
 }
