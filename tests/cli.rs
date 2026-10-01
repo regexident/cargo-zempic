@@ -109,7 +109,6 @@ fn host_target_triple() -> String {
 }
 
 #[test]
-#[ignore = "staged for the error-mapping commit"]
 fn check_reports_the_inherits_chain_of_a_custom_profile() {
     let workspace = common::Fixture::new("multi-member").materialize();
 
@@ -139,7 +138,6 @@ fn check_reports_the_inherits_chain_of_a_custom_profile() {
 }
 
 #[test]
-#[ignore = "staged for the error-mapping commit"]
 fn unparseable_manifest_exits_two_naming_the_file() {
     let workspace = common::Fixture::new("multi-member").materialize();
     let root_manifest = workspace.root().join("Cargo.toml");
@@ -153,7 +151,6 @@ fn unparseable_manifest_exits_two_naming_the_file() {
 }
 
 #[test]
-#[ignore = "staged for the error-mapping commit"]
 fn unknown_package_exits_two() {
     let workspace = common::Fixture::new("multi-member").materialize();
 
