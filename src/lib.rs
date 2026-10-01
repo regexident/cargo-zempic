@@ -7,6 +7,7 @@
 
 pub mod cli;
 pub mod dimension;
+pub mod finding;
 pub mod manifest;
 pub mod profile;
 pub mod workspace;
