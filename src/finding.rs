@@ -632,9 +632,113 @@ fn parse_dimensions(
     Ok(dimensions)
 }
 
+/// The manifest position a finding is about.
+///
+/// Wraps the [`KeySpan`](crate::manifest::KeySpan) a manifest reader produces;
+/// the path it reports is absolute, and relativizing it to the workspace root is
+/// a rendering concern.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Location {
+    /// The manifest key's location.
+    pub span: crate::manifest::KeySpan,
+}
+
+impl Location {
+    /// Wrap a key span as a finding location.
+    pub fn new(span: crate::manifest::KeySpan) -> Self {
+        Self { span }
+    }
+}
+
+/// A single observation about a workspace, with the cost of acting on it.
+///
+/// `tradeoff` is mandatory and never empty: the tool reports what it knows and
+/// tags the cost rather than deciding which costs are acceptable. The predicate
+/// that enforces the invariant is applied where findings enter a report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Finding {
+    /// The rule that produced this finding.
+    pub rule: RuleId,
+    /// The package the finding is about, or [`None`] when it is about the
+    /// workspace itself.
+    pub package: Option<String>,
+    /// The report section the finding belongs to.
+    pub tier: Tier,
+    /// How much acting on the finding matters.
+    pub severity: Severity,
+    /// The editorial size of the finding.
+    pub magnitude: Magnitude,
+    /// How certain the rule is of the finding.
+    pub confidence: Confidence,
+    /// How much work the recommendation takes.
+    pub effort: Effort,
+    /// What the recommendation costs at run time.
+    pub runtime_cost: RuntimeCost,
+    /// Whether the recommendation can be applied automatically.
+    pub fixability: Fixability,
+    /// Where the finding is, when it points at a manifest key.
+    pub location: Option<Location>,
+    /// The finding's headline.
+    pub title: String,
+    /// The finding's explanation.
+    pub detail: String,
+    /// The cost of acting on the finding. Mandatory and never empty.
+    pub tradeoff: String,
+    /// Links to sources, carrying no size figures.
+    pub references: Vec<String>,
+}
+
+impl Finding {
+    /// Whether the finding belongs to the advisory category or is report-only.
+    ///
+    /// This covers both categories the advisory gate names: a rule under the
+    /// `advisory` path, and any finding whose fixability is
+    /// [`Fixability::ReportOnly`]. A high-severity report-only finding is
+    /// therefore advisory by this predicate.
+    pub fn is_advisory(&self) -> bool {
+        self.rule.category() == "advisory" || self.fixability == Fixability::ReportOnly
+    }
+
+    /// Whether an automated fix exists for the finding.
+    pub fn is_automatable(&self) -> bool {
+        self.fixability.is_automatable()
+    }
+
+    /// Whether the finding states a tradeoff.
+    ///
+    /// A tradeoff of only whitespace is treated as absent, so a finding cannot
+    /// satisfy the mandatory-tradeoff invariant with a blank line.
+    pub fn tradeoff_is_present(&self) -> bool {
+        self.tradeoff
+            .chars()
+            .any(|character| !character.is_whitespace())
+    }
+}
+
+/// Two or more dimensions recommending different settings for one rule.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Conflict {
+    /// The rule path the recommendations disagree about.
+    pub rule_path: String,
+    /// One recommendation per dimension in the conflict.
+    pub recommendations: Vec<Recommendation>,
+}
+
+/// One dimension's recommendation within a [`Conflict`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Recommendation {
+    /// The dimension offering the recommendation.
+    pub dimension: crate::dimension::Dimension,
+    /// The setting the dimension recommends.
+    pub setting: String,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Magnitude, RuleId, RuleIdError, Selector, SelectorError, Severity, Tier};
+    use super::{
+        Confidence, Effort, Finding, Fixability, Magnitude, RuleId, RuleIdError, RuntimeCost,
+        Selector, SelectorError, Severity, Tier,
+    };
     use crate::dimension::Dimension;
 
     #[test]
@@ -859,5 +963,49 @@ mod tests {
 
             assert!(selector.matches(&id), "`{text}` must match itself");
         }
+    }
+
+    /// Build a finding from the fields the advisory predicates read.
+    fn sample(rule: &str, fixability: Fixability, tradeoff: &str) -> Finding {
+        Finding {
+            rule: RuleId::parse(rule).expect("the rule parses"),
+            package: None,
+            tier: Tier::Foundational,
+            severity: Severity::High,
+            magnitude: Magnitude::Large,
+            confidence: Confidence::High,
+            effort: Effort::Trivial,
+            runtime_cost: RuntimeCost::None,
+            fixability,
+            location: None,
+            title: "t".to_owned(),
+            detail: "d".to_owned(),
+            tradeoff: tradeoff.to_owned(),
+            references: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn finding_is_advisory_by_category_or_by_report_only() {
+        assert!(sample("advisory/upx", Fixability::ReportOnly, "x").is_advisory());
+        assert!(sample("advisory/no-std", Fixability::Safe, "x").is_advisory());
+        assert!(sample("config/rustflags-shadowed", Fixability::ReportOnly, "x").is_advisory());
+        assert!(!sample("profile/strip", Fixability::Safe, "x").is_advisory());
+        assert!(!sample("profile/lto", Fixability::Consequential, "x").is_advisory());
+    }
+
+    #[test]
+    fn finding_is_automatable_for_safe_and_consequential() {
+        assert!(sample("profile/strip", Fixability::Safe, "x").is_automatable());
+        assert!(sample("profile/lto", Fixability::Consequential, "x").is_automatable());
+        assert!(!sample("config/rustflags-shadowed", Fixability::ReportOnly, "x").is_automatable());
+    }
+
+    #[test]
+    fn finding_tradeoff_presence_rejects_blank_text() {
+        assert!(!sample("profile/strip", Fixability::Safe, "").tradeoff_is_present());
+        assert!(!sample("profile/strip", Fixability::Safe, "   ").tradeoff_is_present());
+        assert!(!sample("profile/strip", Fixability::Safe, "\n\t").tradeoff_is_present());
+        assert!(sample("profile/strip", Fixability::Safe, "link times rise").tradeoff_is_present());
     }
 }
