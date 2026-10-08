@@ -371,18 +371,40 @@ fn split_dimension(
 
 /// Validate and split a path into its segments.
 fn parse_path(path_text: &str, original: &str) -> std::result::Result<Vec<String>, RuleIdError> {
+    validate_path(path_text).map_err(|defect| match defect {
+        PathDefect::EmptySegment => RuleIdError::EmptySegment {
+            text: original.to_owned(),
+        },
+        PathDefect::InvalidSegment { segment } => RuleIdError::InvalidSegment {
+            text: original.to_owned(),
+            segment,
+        },
+    })
+}
+
+/// The defect a path can carry, shared by identifiers and selectors.
+enum PathDefect {
+    /// A leading, trailing or doubled `/` produced an empty segment.
+    EmptySegment,
+    /// A segment does not match the `[a-z0-9][a-z0-9-]*` grammar.
+    InvalidSegment { segment: String },
+}
+
+/// Split `path_text` on `/` and validate every segment.
+///
+/// A path is a sequence of one or more non-empty segments, so this is the one
+/// definition of §4.2's `segment` production used by both [`RuleId`] and
+/// [`Selector`]; a caller may pass an empty text for a selector's empty path.
+fn validate_path(path_text: &str) -> std::result::Result<Vec<String>, PathDefect> {
     let mut segments = Vec::new();
 
     for segment in path_text.split('/') {
         if segment.is_empty() {
-            return Err(RuleIdError::EmptySegment {
-                text: original.to_owned(),
-            });
+            return Err(PathDefect::EmptySegment);
         }
 
         if !segment_is_valid(segment) {
-            return Err(RuleIdError::InvalidSegment {
-                text: original.to_owned(),
+            return Err(PathDefect::InvalidSegment {
                 segment: segment.to_owned(),
             });
         }
@@ -410,9 +432,209 @@ fn segment_is_valid(segment: &str) -> bool {
     })
 }
 
+/// A pattern selecting rules for suppression or narrowing.
+///
+/// A selector extends a rule identifier: its path may be empty, matching every
+/// category, and its dimension clause may name several dimensions. An empty
+/// `dimensions` means any dimension; an empty `path` matches every path. A
+/// canonical rule identifier is itself a legal selector that matches the rule
+/// it names, so a full identifier is accepted wherever a selector is taken.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Selector {
+    path: Vec<String>,
+    dimensions: Vec<crate::dimension::Dimension>,
+}
+
+impl Selector {
+    /// Parse a selector.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SelectorError`] naming the defect when `text` is empty, has
+    /// an empty or ill-formed path segment, names an unknown dimension, carries
+    /// more than one dimension qualifier, or has an empty dimension list.
+    pub fn parse(text: &str) -> std::result::Result<Self, SelectorError> {
+        let trimmed = text.trim();
+
+        if trimmed.is_empty() {
+            return Err(SelectorError::Empty);
+        }
+
+        let (path_text, dimension_text) = split_qualifier(trimmed)?;
+
+        let path = if path_text.is_empty() {
+            Vec::new()
+        } else {
+            validate_path(path_text).map_err(|defect| match defect {
+                PathDefect::EmptySegment => SelectorError::EmptySegment {
+                    text: text.to_owned(),
+                },
+                PathDefect::InvalidSegment { segment } => SelectorError::InvalidSegment {
+                    text: text.to_owned(),
+                    segment,
+                },
+            })?
+        };
+
+        let dimensions = match dimension_text {
+            None => Vec::new(),
+            Some(list) => parse_dimensions(list, text)?,
+        };
+
+        Ok(Selector { path, dimensions })
+    }
+
+    /// Whether this selector matches `id`.
+    ///
+    /// The path matches when it is a segment-wise prefix of the identifier's
+    /// path, and the dimension clause matches when it is empty or the
+    /// identifier's dimension is one the clause names.
+    pub fn matches(&self, id: &RuleId) -> bool {
+        let path_matches = self.path.len() <= id.path().len()
+            && self
+                .path
+                .iter()
+                .zip(id.path())
+                .all(|(selected, actual)| selected == actual);
+
+        if !path_matches {
+            return false;
+        }
+
+        self.dimensions.is_empty()
+            || id
+                .dimension()
+                .is_some_and(|dimension| self.dimensions.contains(&dimension))
+    }
+
+    /// The canonical spelling of this selector.
+    pub fn text(&self) -> String {
+        let mut text = self.path.join("/");
+
+        if !self.dimensions.is_empty() {
+            text.push(':');
+
+            let names: Vec<&str> = self
+                .dimensions
+                .iter()
+                .map(|dimension| dimension.as_str())
+                .collect();
+
+            text.push_str(&names.join(","));
+        }
+
+        text
+    }
+}
+
+impl std::fmt::Display for Selector {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.text())
+    }
+}
+
+/// Why a selector could not be parsed.
+#[derive(Debug, thiserror::Error)]
+pub enum SelectorError {
+    /// The input is empty or whitespace-only.
+    #[error("selector is empty")]
+    Empty,
+
+    /// The path contains an empty segment, including a leading, trailing or
+    /// doubled `/`.
+    #[error("selector `{text}` contains an empty segment")]
+    EmptySegment {
+        /// The offending input.
+        text: String,
+    },
+
+    /// A path segment does not match the `[a-z0-9][a-z0-9-]*` grammar.
+    #[error("selector segment `{segment}` in `{text}` is not lowercase alphanumeric")]
+    InvalidSegment {
+        /// The offending input.
+        text: String,
+        /// The segment that did not match the grammar.
+        segment: String,
+    },
+
+    /// A dimension qualifier names no implemented dimension.
+    #[error("selector `{text}` names unknown dimension `{name}`")]
+    UnknownDimension {
+        /// The offending input.
+        text: String,
+        /// The dimension name that was not recognized.
+        name: String,
+    },
+
+    /// The selector carries more than one dimension qualifier.
+    #[error("selector `{text}` carries more than one dimension qualifier")]
+    MultipleQualifiers {
+        /// The offending input.
+        text: String,
+    },
+
+    /// The dimension list after `:` is empty or contains an empty element.
+    #[error("selector `{text}` has an empty dimension list")]
+    EmptyDimensionList {
+        /// The offending input.
+        text: String,
+    },
+}
+
+/// Split a selector into its path text and its optional dimension list.
+///
+/// The dimension list is the text after the first `:`; a second `:` is a
+/// defect rather than part of any dimension name.
+fn split_qualifier(text: &str) -> std::result::Result<(&str, Option<&str>), SelectorError> {
+    let Some((path, list)) = text.split_once(':') else {
+        return Ok((text, None));
+    };
+
+    if list.contains(':') {
+        return Err(SelectorError::MultipleQualifiers {
+            text: text.to_owned(),
+        });
+    }
+
+    Ok((path, Some(list)))
+}
+
+/// Parse a comma-separated dimension list into dimensions.
+fn parse_dimensions(
+    list: &str,
+    original: &str,
+) -> std::result::Result<Vec<crate::dimension::Dimension>, SelectorError> {
+    if list.is_empty() {
+        return Err(SelectorError::EmptyDimensionList {
+            text: original.to_owned(),
+        });
+    }
+
+    let mut dimensions = Vec::new();
+
+    for name in list.split(',') {
+        if name.is_empty() {
+            return Err(SelectorError::EmptyDimensionList {
+                text: original.to_owned(),
+            });
+        }
+
+        let dimension = crate::dimension::Dimension::from_name(name).ok_or_else(|| {
+            SelectorError::UnknownDimension {
+                text: original.to_owned(),
+                name: name.to_owned(),
+            }
+        })?;
+
+        dimensions.push(dimension);
+    }
+
+    Ok(dimensions)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Magnitude, RuleId, RuleIdError, Severity, Tier};
+    use super::{Magnitude, RuleId, RuleIdError, Selector, SelectorError, Severity, Tier};
     use crate::dimension::Dimension;
 
     #[test]
@@ -527,5 +749,115 @@ mod tests {
         assert!(Magnitude::Small < Magnitude::Moderate);
         assert!(Magnitude::Moderate < Magnitude::Large);
         assert_eq!(Magnitude::Large.as_str(), "large");
+    }
+
+    /// Parse a selector and a rule identifier and report whether they match.
+    fn matches(selector: &str, id: &str) -> bool {
+        Selector::parse(selector)
+            .expect("the selector parses")
+            .matches(&RuleId::parse(id).expect("the identifier parses"))
+    }
+
+    #[test]
+    fn selector_matches_a_single_rule_facet() {
+        assert!(matches("profile/opt-level:size", "profile/opt-level:size"));
+        assert!(!matches("profile/opt-level:size", "profile/opt-level"));
+        assert!(!matches("profile/opt-level:size", "profile/lto"));
+    }
+
+    #[test]
+    fn selector_without_a_dimension_matches_every_facet() {
+        assert!(matches("profile/opt-level", "profile/opt-level:size"));
+        assert!(matches("profile/opt-level", "profile/opt-level"));
+        assert!(!matches("profile/opt-level", "profile/opt-levels"));
+        assert!(!matches("profile/opt-level", "profile/lto"));
+    }
+
+    #[test]
+    fn selector_matches_a_whole_category() {
+        assert!(matches("profile", "profile/strip"));
+        assert!(matches("profile", "profile/opt-level:size"));
+        assert!(matches("profile", "profile/dependency-opt-level"));
+        assert!(!matches("profile", "deps/default-features"));
+        assert!(!matches("profile", "config/link-dead-code"));
+    }
+
+    #[test]
+    fn selector_with_only_a_dimension_matches_across_categories() {
+        assert!(matches(":size", "profile/opt-level:size"));
+        assert!(!matches(":size", "profile/strip"));
+        assert!(!matches(":size", "deps/duplicate-versions"));
+    }
+
+    #[test]
+    fn selector_path_prefix_is_segment_wise() {
+        assert!(!matches("profile", "profiles/strip"));
+        assert!(!matches("prof", "profile/strip"));
+        assert!(!matches("profile/opt", "profile/opt-level"));
+    }
+
+    #[test]
+    fn selector_accepts_a_comma_separated_dimension_list() {
+        let selector = Selector::parse("profile:size,size").expect("a comma list parses");
+
+        assert!(selector.matches(&RuleId::parse("profile/opt-level:size").unwrap()));
+        assert_eq!(selector.text(), "profile:size,size");
+    }
+
+    #[test]
+    fn selector_rejects_malformed_input() {
+        let assert_variant = |text: &str, matches: fn(&SelectorError) -> bool| {
+            let error = Selector::parse(text).expect_err("a malformed selector is rejected");
+
+            assert!(matches(&error), "`{text}` gave {error:?}");
+        };
+
+        for text in ["", "   "] {
+            assert_variant(text, |error| matches!(error, SelectorError::Empty));
+        }
+
+        for text in ["profile//strip", "/profile", "profile/"] {
+            assert_variant(text, |error| {
+                matches!(error, SelectorError::EmptySegment { .. })
+            });
+        }
+
+        for text in ["Profile", "profile/-x", "profile/opt_level"] {
+            assert_variant(text, |error| {
+                matches!(error, SelectorError::InvalidSegment { .. })
+            });
+        }
+
+        for text in ["profile:speed", "profile:bogus"] {
+            assert_variant(text, |error| {
+                matches!(error, SelectorError::UnknownDimension { .. })
+            });
+        }
+
+        assert_variant("profile:size:size", |error| {
+            matches!(error, SelectorError::MultipleQualifiers { .. })
+        });
+
+        for text in [":", "profile:", "profile:size,", "profile:,size"] {
+            assert_variant(text, |error| {
+                matches!(error, SelectorError::EmptyDimensionList { .. })
+            });
+        }
+    }
+
+    #[test]
+    fn every_rule_id_is_a_selector_that_matches_itself() {
+        for text in [
+            "profile/strip",
+            "profile/opt-level:size",
+            "workspace/ignored-member-profile",
+            "deps/build-only-note",
+            "advisory/lib-profile-not-applicable",
+        ] {
+            let selector = Selector::parse(text).expect("a canonical identifier is a selector");
+            let id = RuleId::parse(text).expect("a canonical identifier parses");
+
+            assert!(selector.matches(&id), "`{text}` must match itself");
+        }
     }
 }
