@@ -6,6 +6,7 @@
 //! Rendering and exit-code mapping live in the binary target.
 
 pub mod cli;
+pub mod config;
 pub mod dimension;
 pub mod finding;
 pub mod manifest;
