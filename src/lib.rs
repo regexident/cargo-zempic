@@ -10,6 +10,7 @@ pub mod dimension;
 pub mod finding;
 pub mod manifest;
 pub mod profile;
+pub mod report;
 pub mod workspace;
 
 /// The result type used throughout the crate, carrying [`ZempicError`].
@@ -117,6 +118,15 @@ pub enum ZempicError {
     UnknownPackage {
         /// The spec that matched no workspace member.
         spec: String,
+    },
+
+    /// A finding reached a report without the mandatory tradeoff.
+    #[error(
+        "rule `{rule}` produced a finding with no tradeoff; a finding must state the cost of acting on it"
+    )]
+    MissingTradeoff {
+        /// The rule identifier that produced the finding.
+        rule: String,
     },
 }
 
