@@ -146,9 +146,21 @@ pub fn metadata_for(id: &RuleId) -> Option<&'static RuleMetadata> {
     registry().iter().find(|entry| entry.rule_id() == *id)
 }
 
+/// The directory rule documentation lives in, relative to the package root.
+pub const DOCUMENTATION_DIRECTORY: &str = "src/rules/docs";
+
+/// The path of `id`'s documentation file, relative to [`DOCUMENTATION_DIRECTORY`].
+///
+/// The path is the rule's path with the dimension qualifier dropped, so
+/// `profile/opt-level:size` documents to `profile/opt-level.md`; a rule's
+/// documentation is authored together with the rule.
+pub fn documentation_path(id: &RuleId) -> String {
+    format!("{}.md", id.path_text())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{registry, severity_assignments, severity_of};
+    use super::{documentation_path, registry, severity_assignments, severity_of};
     use crate::finding::{RuleId, Selector, Severity};
     use std::collections::BTreeSet;
 
@@ -250,5 +262,17 @@ mod tests {
                 entry.id
             );
         }
+    }
+
+    #[test]
+    fn documentation_path_drops_the_dimension_qualifier() {
+        assert_eq!(
+            documentation_path(&RuleId::parse("profile/opt-level:size").unwrap()),
+            "profile/opt-level.md"
+        );
+        assert_eq!(
+            documentation_path(&RuleId::parse("profile/strip").unwrap()),
+            "profile/strip.md"
+        );
     }
 }

@@ -641,3 +641,77 @@ fn resolution_fails_on_an_unparseable_root_manifest() {
 fn resolution_root_of(resolution: &Resolution) -> &camino::Utf8Path {
     &resolution.workspace_root
 }
+
+/// Every registered rule must have a documentation file.
+#[test]
+fn every_registered_rule_has_a_documentation_file() {
+    let root = camino::Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let docs = root.join(cargo_zempic::rules::DOCUMENTATION_DIRECTORY);
+
+    for entry in cargo_zempic::rules::registry() {
+        let expected = docs.join(cargo_zempic::rules::documentation_path(&entry.rule_id()));
+
+        assert!(
+            expected.is_file(),
+            "rule `{}` has no documentation file at `{}`",
+            entry.id,
+            expected
+        );
+    }
+}
+
+/// Every documentation file must have a registered rule.
+#[test]
+fn every_documentation_file_has_a_registered_rule() {
+    let root = camino::Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let docs = root.join(cargo_zempic::rules::DOCUMENTATION_DIRECTORY);
+
+    let expected: Vec<String> = cargo_zempic::rules::registry()
+        .iter()
+        .map(|entry| cargo_zempic::rules::documentation_path(&entry.rule_id()))
+        .collect();
+
+    for relative in collect_markdown_files(&docs) {
+        assert!(
+            expected.contains(&relative),
+            "documentation file `{relative}` has no registered rule"
+        );
+    }
+}
+
+/// Collect every Markdown file under `root`, as paths relative to `root`.
+///
+/// An absent directory contributes nothing, so a project with no rule
+/// documentation yet passes the totality check.
+fn collect_markdown_files(root: &camino::Utf8Path) -> Vec<String> {
+    let mut collected = Vec::new();
+    walk_markdown(root, root, &mut collected);
+
+    collected
+}
+
+/// Recursively add Markdown files under `directory` to `collected`.
+fn walk_markdown(
+    root: &camino::Utf8Path,
+    directory: &camino::Utf8Path,
+    collected: &mut Vec<String>,
+) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = camino::Utf8PathBuf::from_path_buf(entry.path()).expect("paths are UTF-8");
+
+        if path.is_dir() {
+            walk_markdown(root, &path, collected);
+        } else if path.extension() == Some("md") {
+            let relative = path
+                .strip_prefix(root)
+                .expect("the file is under the root")
+                .to_owned();
+
+            collected.push(relative.into_string());
+        }
+    }
+}
