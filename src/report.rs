@@ -2,6 +2,8 @@
 
 use crate::finding::{Finding, Magnitude, Severity, Tier};
 
+pub mod human;
+
 /// How many findings carry each severity.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SeverityCounts {

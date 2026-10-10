@@ -7,9 +7,8 @@
 
 use anyhow::Context;
 use cargo_zempic::cli::{Args, Command};
-use cargo_zempic::profile::ResolvedProfile;
 use cargo_zempic::report::Report;
-use cargo_zempic::{AnalysisConfig, Resolution, analyze};
+use cargo_zempic::{AnalysisConfig, analyze};
 use clap::Parser;
 use std::process::ExitCode;
 
@@ -47,8 +46,7 @@ fn run(args: Args) -> anyhow::Result<()> {
             let config = AnalysisConfig::from(&check_args.analysis);
             let report = analyze(&config).context("failed to analyze the workspace")?;
 
-            print!("{}", render_resolution(&report.resolution));
-            print!("{}", render_findings(&report));
+            print!("{}", render_report(&report));
 
             for notice in &report.notices {
                 eprintln!("{}", notice.message());
@@ -59,74 +57,11 @@ fn run(args: Args) -> anyhow::Result<()> {
     }
 }
 
-/// Renders the line stating whether the report carries findings.
+/// Render a report through the human renderer.
 ///
-/// With no findings the line is exactly `No findings.`; otherwise it states the
-/// finding count and nothing more. Severity breakdowns, magnitudes and the
-/// magnitude legend are rendered by the report renderer, not here.
-fn render_findings(report: &Report) -> String {
-    if report.is_empty() {
-        "No findings.\n".to_owned()
-    } else {
-        format!("{} findings.\n", report.findings.len())
-    }
-}
-
-/// Renders the human report header described by §12.1.
-///
-/// The header names where the analysis ran, which profile governed it, which
-/// dimensions it answers and which target it resolved for. It carries no size
-/// figure: the counts are facts about the report itself, and the header omits
-/// the `toolchain:` line because nightly availability is outside this scope.
-fn render_resolution(resolution: &Resolution) -> String {
-    let mut output = String::new();
-
-    output.push_str(&format!("cargo-zempic {}\n", env!("CARGO_PKG_VERSION")));
-
-    output.push_str(&format!(
-        "{:>14} {}\n",
-        "workspace:",
-        format_args!(
-            "{}  ({} members, {} selected)",
-            resolution.workspace_root,
-            resolution.member_count,
-            resolution.selected.len()
-        )
-    ));
-
-    output.push_str(&format!(
-        "{:>14} {}\n",
-        "profile:",
-        format_args!(
-            "{}  (inherits: {})",
-            resolution.profile.name,
-            render_inherits(&resolution.profile)
-        )
-    ));
-
-    let dimensions: Vec<&str> = resolution
-        .dimensions
-        .iter()
-        .map(|dimension| dimension.as_str())
-        .collect();
-
-    output.push_str(&format!(
-        "{:>14} {}\n",
-        "optimizing for:",
-        dimensions.join(", ")
-    ));
-
-    output.push_str(&format!("{:>14} {}\n", "target:", resolution.target_triple));
-
-    output
-}
-
-/// Renders a profile's `inherits` chain as `parent -> ... -> root`, or `none`
-/// when the profile inherits from no other.
-fn render_inherits(profile: &ResolvedProfile) -> String {
-    if profile.inherits_chain.is_empty() {
-        "none".to_owned()
-    } else {
-        profile.inherits_chain.join(" -> ")
-    }
+/// The call site supplies the display inputs: color from the resolved
+/// [`ColorChoice`](cargo_zempic::report::ColorChoice) and width from the
+/// terminal, so the renderer stays a pure function of its report and inputs.
+fn render_report(report: &Report) -> String {
+    cargo_zempic::report::human::render(report, false, cargo_zempic::report::render_width())
 }

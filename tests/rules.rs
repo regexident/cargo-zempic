@@ -842,3 +842,263 @@ fn analyze_fails_when_the_workspace_configuration_is_invalid() {
     assert!(error.to_string().contains("zempic.toml"));
     assert!(error.to_string().contains("nonsense"));
 }
+
+/// The `multi-member` fixture's resolution, for assembling reports by hand.
+fn fixture_resolution() -> Resolution {
+    let workspace = common::Fixture::new("multi-member").materialize();
+    let mut config = analysis_config(&workspace);
+    config.dimensions = vec![Dimension::Size];
+
+    resolve(&config).expect("the fixture resolves")
+}
+
+/// Build a finding from the fields the renderers read.
+fn finding(
+    rule: &str,
+    tier: cargo_zempic::finding::Tier,
+    severity: cargo_zempic::finding::Severity,
+    magnitude: cargo_zempic::finding::Magnitude,
+    change: Option<cargo_zempic::finding::Change>,
+) -> cargo_zempic::finding::Finding {
+    cargo_zempic::finding::Finding {
+        rule: cargo_zempic::finding::RuleId::parse(rule).expect("the rule parses"),
+        package: None,
+        tier,
+        severity,
+        magnitude,
+        confidence: cargo_zempic::finding::Confidence::High,
+        effort: cargo_zempic::finding::Effort::Trivial,
+        runtime_cost: cargo_zempic::finding::RuntimeCost::None,
+        fixability: cargo_zempic::finding::Fixability::Safe,
+        change,
+        location: None,
+        title: "title".to_owned(),
+        detail: "detail".to_owned(),
+        tradeoff: "tradeoff".to_owned(),
+        references: Vec::new(),
+    }
+}
+
+/// Assemble a report from findings over the fixture resolution.
+fn report_of(findings: Vec<cargo_zempic::finding::Finding>) -> cargo_zempic::report::Report {
+    cargo_zempic::report::Report::new(
+        fixture_resolution(),
+        findings,
+        Vec::new(),
+        Vec::new(),
+        cargo_zempic::report::ReportSettings::default(),
+    )
+    .expect("the report assembles")
+}
+
+/// A key span pointing at `relative` under the resolution's workspace root.
+fn span_in(root: &camino::Utf8Path, relative: &str, line: usize) -> KeySpan {
+    KeySpan {
+        file: root.join(relative),
+        key: "profile.release.strip".to_owned(),
+        line,
+        column: 1,
+    }
+}
+
+#[test]
+fn human_renderer_emits_a_section_per_non_empty_tier() {
+    use cargo_zempic::finding::{Magnitude, Severity, Tier};
+
+    let resolution = fixture_resolution();
+    let mut findings = vec![
+        finding(
+            "profile/strip",
+            Tier::Foundational,
+            Severity::High,
+            Magnitude::Large,
+            Some(cargo_zempic::finding::Change {
+                current: "unset".to_owned(),
+                recommended: "\"symbols\"".to_owned(),
+            }),
+        ),
+        finding(
+            "profile/debug-info",
+            Tier::Foundational,
+            Severity::High,
+            Magnitude::Moderate,
+            None,
+        ),
+        finding(
+            "profile/lto",
+            Tier::Compiler,
+            Severity::Medium,
+            Magnitude::Moderate,
+            None,
+        ),
+        finding(
+            "deps/duplicate-versions",
+            Tier::Dependencies,
+            Severity::Medium,
+            Magnitude::Moderate,
+            None,
+        ),
+        finding(
+            "deps/workspace-resolver",
+            Tier::Dependencies,
+            Severity::High,
+            Magnitude::Moderate,
+            None,
+        ),
+    ];
+
+    findings[1].location = Some(cargo_zempic::finding::Location::new(span_in(
+        &resolution.workspace_root,
+        "Cargo.toml",
+        6,
+    )));
+
+    let report = cargo_zempic::report::Report::new(
+        resolution,
+        findings,
+        Vec::new(),
+        Vec::new(),
+        cargo_zempic::report::ReportSettings::default(),
+    )
+    .unwrap();
+
+    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+
+    assert!(rendered.contains("TIER 1  FOUNDATIONAL"), "{rendered}");
+    assert!(rendered.contains("TIER 2  COMPILER"), "{rendered}");
+    assert!(rendered.contains("TIER 4  DEPENDENCIES"), "{rendered}");
+    assert!(!rendered.contains("TIER 3"), "{rendered}");
+    assert!(!rendered.contains("TIER 5"), "{rendered}");
+    assert!(rendered.contains("2 findings"), "{rendered}");
+    assert!(rendered.contains("1 finding"), "{rendered}");
+    assert!(rendered.contains("unset -> \"symbols\""), "{rendered}");
+    assert!(rendered.contains("effort: trivial   runtime cost: none   fix: safe"));
+    assert!(rendered.contains("Tradeoff: tradeoff"), "{rendered}");
+}
+
+#[test]
+fn human_renderer_renders_the_change_column_or_the_location() {
+    use cargo_zempic::finding::{Change, Location, Magnitude, Severity, Tier};
+
+    let resolution = fixture_resolution();
+    let mut with_location = finding(
+        "config/rustflags-shadowed",
+        Tier::Compiler,
+        Severity::High,
+        Magnitude::None,
+        None,
+    );
+    with_location.location = Some(Location::new(span_in(
+        &resolution.workspace_root,
+        ".cargo/config.toml",
+        3,
+    )));
+
+    let report = cargo_zempic::report::Report::new(
+        resolution,
+        vec![
+            finding(
+                "profile/strip",
+                Tier::Foundational,
+                Severity::High,
+                Magnitude::Large,
+                Some(Change {
+                    current: "unset".to_owned(),
+                    recommended: "\"symbols\"".to_owned(),
+                }),
+            ),
+            with_location,
+        ],
+        Vec::new(),
+        Vec::new(),
+        cargo_zempic::report::ReportSettings::default(),
+    )
+    .unwrap();
+
+    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+
+    assert!(rendered.contains("unset -> \"symbols\""), "{rendered}");
+    assert!(rendered.contains(".cargo/config.toml"), "{rendered}");
+
+    let absolute = report.resolution.workspace_root.join(".cargo/config.toml");
+    assert!(
+        !rendered.contains(absolute.as_str()),
+        "a location inside the root must be relative: {rendered}"
+    );
+}
+
+#[test]
+fn human_renderer_states_there_are_no_findings_when_empty() {
+    let report = report_of(Vec::new());
+
+    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+
+    assert!(rendered.contains("cargo-zempic"), "{rendered}");
+    assert!(rendered.contains("workspace:"), "{rendered}");
+    assert!(rendered.contains("No findings."), "{rendered}");
+}
+
+#[test]
+fn human_renderer_emits_no_escape_sequence_without_color() {
+    use cargo_zempic::finding::{Magnitude, Severity, Tier};
+
+    let report = report_of(vec![finding(
+        "profile/strip",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Large,
+        None,
+    )]);
+
+    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+
+    assert!(!rendered.contains('\u{1b}'), "{rendered:?}");
+}
+
+#[test]
+fn human_renderer_renders_a_conflict_block() {
+    use cargo_zempic::dimension::Dimension;
+    use cargo_zempic::finding::{Magnitude, Recommendation, Severity, Tier};
+
+    let report = cargo_zempic::report::Report::new(
+        fixture_resolution(),
+        vec![finding(
+            "conflict/profile-opt-level",
+            Tier::Compiler,
+            Severity::High,
+            Magnitude::None,
+            None,
+        )],
+        vec![cargo_zempic::finding::Conflict {
+            rule_path: "profile/opt-level".to_owned(),
+            recommendations: vec![
+                Recommendation {
+                    dimension: Dimension::Size,
+                    setting: "opt-level = \"z\"".to_owned(),
+                },
+                Recommendation {
+                    dimension: Dimension::Size,
+                    setting: "opt-level = 3".to_owned(),
+                },
+            ],
+        }],
+        Vec::new(),
+        cargo_zempic::report::ReportSettings::default(),
+    )
+    .unwrap();
+
+    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+
+    assert!(
+        rendered.contains("CONFLICT  profile/opt-level"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("size recommends  opt-level = \"z\""),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("No fix applied. Choose one dimension, or set a per-package override."),
+        "{rendered}"
+    );
+}
