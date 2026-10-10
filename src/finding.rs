@@ -650,6 +650,23 @@ impl Location {
     }
 }
 
+/// The change a finding recommends to one setting.
+///
+/// A finding distinguishes three states, and the report must not conflate them:
+/// explicitly set to the recommended value, explicitly set to something else, or
+/// unset and falling back to a cargo default. The first produces no finding at
+/// all, so a [`Change`] expresses the remaining two: [`current`](Self::current)
+/// holds the rendered value for an explicit setting, and the literal `unset` for
+/// a cargo default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Change {
+    /// The setting's current value, or the literal `unset` when no manifest sets
+    /// it and a cargo default applies.
+    pub current: String,
+    /// The value the finding recommends.
+    pub recommended: String,
+}
+
 /// A single observation about a workspace, with the cost of acting on it.
 ///
 /// `tradeoff` is mandatory and never empty: the tool reports what it knows and
@@ -676,6 +693,8 @@ pub struct Finding {
     pub runtime_cost: RuntimeCost,
     /// Whether the recommendation can be applied automatically.
     pub fixability: Fixability,
+    /// The change the finding recommends to a setting, when it recommends one.
+    pub change: Option<Change>,
     /// Where the finding is, when it points at a manifest key.
     pub location: Option<Location>,
     /// The finding's headline.
@@ -736,8 +755,8 @@ pub struct Recommendation {
 #[cfg(test)]
 mod tests {
     use super::{
-        Confidence, Effort, Finding, Fixability, Magnitude, RuleId, RuleIdError, RuntimeCost,
-        Selector, SelectorError, Severity, Tier,
+        Change, Confidence, Effort, Finding, Fixability, Magnitude, RuleId, RuleIdError,
+        RuntimeCost, Selector, SelectorError, Severity, Tier,
     };
     use crate::dimension::Dimension;
 
@@ -977,6 +996,7 @@ mod tests {
             effort: Effort::Trivial,
             runtime_cost: RuntimeCost::None,
             fixability,
+            change: None,
             location: None,
             title: "t".to_owned(),
             detail: "d".to_owned(),
@@ -1007,5 +1027,30 @@ mod tests {
         assert!(!sample("profile/strip", Fixability::Safe, "   ").tradeoff_is_present());
         assert!(!sample("profile/strip", Fixability::Safe, "\n\t").tradeoff_is_present());
         assert!(sample("profile/strip", Fixability::Safe, "link times rise").tradeoff_is_present());
+    }
+
+    #[test]
+    fn change_records_the_current_and_recommended_values() {
+        let change = Change {
+            current: "unset".to_owned(),
+            recommended: "\"symbols\"".to_owned(),
+        };
+
+        assert_eq!(change.current, "unset");
+        assert_eq!(change.recommended, "\"symbols\"");
+
+        let mut with_change = sample("profile/strip", Fixability::Safe, "x");
+        with_change.change = Some(change.clone());
+
+        assert_eq!(
+            with_change
+                .change
+                .as_ref()
+                .map(|change| change.recommended.as_str()),
+            Some("\"symbols\"")
+        );
+
+        let without_change = sample("profile/strip", Fixability::Safe, "x");
+        assert_ne!(with_change, without_change);
     }
 }

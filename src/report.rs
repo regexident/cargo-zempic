@@ -346,6 +346,7 @@ mod tests {
             effort: Effort::Trivial,
             runtime_cost: RuntimeCost::None,
             fixability,
+            change: None,
             location: None,
             title: "t".to_owned(),
             detail: "d".to_owned(),
