@@ -130,6 +130,86 @@ pub enum ZempicError {
         /// The rule identifier that produced the finding.
         rule: String,
     },
+
+    /// A configuration file could not be read.
+    #[error("failed to read configuration `{path}`: {source}")]
+    ConfigRead {
+        /// Path of the configuration file that could not be read.
+        path: camino::Utf8PathBuf,
+        /// Underlying I/O failure.
+        source: std::io::Error,
+    },
+
+    /// A configuration file could not be parsed or carried an unknown key.
+    #[error("failed to parse configuration `{path}`: {source}")]
+    ConfigParse {
+        /// Path of the configuration file that could not be parsed.
+        path: camino::Utf8PathBuf,
+        /// Underlying TOML failure.
+        source: toml_edit::de::Error,
+    },
+
+    /// A configuration file declares an unsupported schema version.
+    #[error(
+        "configuration `{path}` declares schema version {found}, but only {expected} is supported"
+    )]
+    ConfigSchemaVersion {
+        /// Path of the configuration file.
+        path: camino::Utf8PathBuf,
+        /// The version the file declares.
+        found: u32,
+        /// The version this crate supports.
+        expected: u32,
+    },
+
+    /// A configuration ignore selector is malformed.
+    #[error("configuration `{path}` has an invalid selector `{text}`: {source}")]
+    ConfigSelector {
+        /// Path of the configuration file.
+        path: camino::Utf8PathBuf,
+        /// The selector as written.
+        text: String,
+        /// Why the selector is invalid.
+        source: crate::finding::SelectorError,
+    },
+
+    /// A configuration date is malformed.
+    #[error("configuration `{path}` has an invalid value `{found}` for `{key}`")]
+    ConfigDate {
+        /// Path of the configuration file.
+        path: camino::Utf8PathBuf,
+        /// The key holding the invalid value.
+        key: String,
+        /// The value as written.
+        found: String,
+    },
+
+    /// A configuration names an optimization dimension the crate does not implement.
+    #[error("configuration `{path}` names unknown dimension `{found}`")]
+    ConfigDimension {
+        /// Path of the configuration file.
+        path: camino::Utf8PathBuf,
+        /// The dimension name that was not recognized.
+        found: String,
+    },
+
+    /// A configuration names an unknown report format.
+    #[error("configuration `{path}` names unknown report format `{found}`")]
+    ConfigFormat {
+        /// Path of the configuration file.
+        path: camino::Utf8PathBuf,
+        /// The format name that was not recognized.
+        found: String,
+    },
+
+    /// A configuration names an unknown fail-on threshold.
+    #[error("configuration `{path}` names unknown fail-on threshold `{found}`")]
+    ConfigFailOn {
+        /// Path of the configuration file.
+        path: camino::Utf8PathBuf,
+        /// The threshold name that was not recognized.
+        found: String,
+    },
 }
 
 /// The inputs a resolution runs from.

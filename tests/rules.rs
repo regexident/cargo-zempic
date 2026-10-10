@@ -715,3 +715,38 @@ fn walk_markdown(
         }
     }
 }
+
+/// The workspace file wins over the dot file, and a member file merges over
+/// the base.
+#[test]
+fn config_discovery_merges_package_files_over_the_workspace_base() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+    let root = workspace.root();
+
+    std::fs::write(
+        root.join("zempic.toml"),
+        "schema_version = 1\n\n[[ignore]]\nrule = \"profile/lto\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join(".zempic.toml"),
+        "schema_version = 1\n\n[[ignore]]\nrule = \"never/read\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("alpha").join("zempic.toml"),
+        "schema_version = 1\n\n[[ignore]]\nrule = \"deps/default-features\"\n",
+    )
+    .unwrap();
+
+    let directories = vec![root.join("alpha"), root.join("beta")];
+    let config = cargo_zempic::config::discover(root, &directories).unwrap();
+
+    let texts: Vec<&str> = config
+        .ignore
+        .iter()
+        .map(|entry| entry.text.as_str())
+        .collect();
+
+    assert_eq!(texts, ["profile/lto", "deps/default-features"]);
+}
