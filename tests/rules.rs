@@ -1102,3 +1102,82 @@ fn human_renderer_renders_a_conflict_block() {
         "{rendered}"
     );
 }
+
+#[test]
+fn human_summary_lists_only_non_zero_categories() {
+    use cargo_zempic::finding::{Fixability, Magnitude, Severity, Tier};
+
+    let mut first = finding(
+        "profile/strip",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Large,
+        None,
+    );
+    first.fixability = Fixability::Safe;
+
+    let second = finding(
+        "config/link-dead-code",
+        Tier::Compiler,
+        Severity::High,
+        Magnitude::Large,
+        None,
+    );
+
+    let report = report_of(vec![first, second]);
+
+    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+
+    assert!(rendered.contains("SUMMARY"), "{rendered}");
+    assert!(rendered.contains("2 findings: 2 high."), "{rendered}");
+    assert!(rendered.contains("By magnitude: 2 large."), "{rendered}");
+    assert!(rendered.contains("2 auto-fixable."), "{rendered}");
+
+    for absent in ["0 medium", "0 low", "0 info", "0 negligible", "0 none"] {
+        assert!(
+            !rendered.contains(absent),
+            "must omit `{absent}`: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn human_summary_omits_the_fixable_line_when_nothing_is_fixable() {
+    use cargo_zempic::finding::{Fixability, Magnitude, Severity, Tier};
+
+    let mut only = finding(
+        "config/rustflags-shadowed",
+        Tier::Compiler,
+        Severity::High,
+        Magnitude::None,
+        None,
+    );
+    only.fixability = Fixability::ReportOnly;
+
+    let report = report_of(vec![only]);
+
+    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+
+    assert!(!rendered.contains("auto-fixable"), "{rendered}");
+}
+
+#[test]
+fn human_renderer_always_emits_the_magnitude_legend() {
+    use cargo_zempic::finding::{Magnitude, Severity, Tier};
+
+    let populated = report_of(vec![finding(
+        "profile/strip",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Large,
+        None,
+    )]);
+    let empty = report_of(Vec::new());
+
+    for report in [&populated, &empty] {
+        let rendered = cargo_zempic::report::human::render(report, false, 80);
+
+        assert!(rendered.contains("ordinal judgement"), "{rendered}");
+        assert!(rendered.contains("reports no sizes"), "{rendered}");
+    }
+}

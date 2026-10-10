@@ -11,7 +11,7 @@
 //! and values that come verbatim out of a finding's own fields.
 
 use crate::Resolution;
-use crate::finding::{Finding, Tier};
+use crate::finding::{Finding, Magnitude, Severity, Tier};
 use crate::profile::ResolvedProfile;
 use crate::report::{BOLD, RESET, Report, severity_color};
 
@@ -24,12 +24,15 @@ pub fn render(report: &Report, color: bool, width: usize) -> String {
 
     if report.is_empty() {
         output.push_str("No findings.\n");
+        output.push_str(&render_legend(width));
 
         return output;
     }
 
     output.push_str(&render_tiers(report, color, width));
     output.push_str(&render_conflicts(report));
+    output.push_str(&render_summary(report));
+    output.push_str(&render_legend(width));
 
     output
 }
@@ -222,6 +225,83 @@ fn render_conflicts(report: &Report) -> String {
     }
 
     output
+}
+
+/// Render the summary of a non-empty report.
+///
+/// The first line carries the finding count, the non-zero severity counts and
+/// the non-zero magnitude counts; the second states the auto-fixable count, but
+/// only when it is positive. A category whose count is zero is omitted, so the
+/// summary never invites the reader to read meaning into a zero.
+fn render_summary(report: &Report) -> String {
+    let summary = &report.summary;
+
+    let sev = [
+        (summary.by_severity.high, Severity::High.as_str()),
+        (summary.by_severity.medium, Severity::Medium.as_str()),
+        (summary.by_severity.low, Severity::Low.as_str()),
+        (summary.by_severity.info, Severity::Info.as_str()),
+    ];
+    let mag = [
+        (summary.by_magnitude.large, Magnitude::Large.as_str()),
+        (summary.by_magnitude.moderate, Magnitude::Moderate.as_str()),
+        (summary.by_magnitude.small, Magnitude::Small.as_str()),
+        (
+            summary.by_magnitude.negligible,
+            Magnitude::Negligible.as_str(),
+        ),
+        (summary.by_magnitude.none, Magnitude::None.as_str()),
+    ];
+
+    let finding_word = if summary.total == 1 {
+        "finding"
+    } else {
+        "findings"
+    };
+
+    let mut first = format!("  {} {finding_word}: ", summary.total);
+    first.push_str(&counted_list(&sev));
+    first.push('.');
+
+    if let Some(by_magnitude) = counted_clause("By magnitude: ", &mag) {
+        first.push_str("  ");
+        first.push_str(&by_magnitude);
+    }
+
+    let mut output = format!("\nSUMMARY\n{first}\n");
+
+    if summary.fixable > 0 {
+        output.push_str(&format!("  {} auto-fixable.\n", summary.fixable));
+    }
+
+    output
+}
+
+/// Render the magnitude legend, wrapped to `width` at two spaces of indent.
+fn render_legend(width: usize) -> String {
+    format!("\n{}", wrap(crate::report::MAGNITUDE_LEGEND, 2, width))
+}
+
+/// Join the non-zero counts of `entries` as `<n> <name>`, comma-separated.
+fn counted_list(entries: &[(usize, &str)]) -> String {
+    entries
+        .iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, name)| format!("{count} {name}"))
+        .collect::<Vec<String>>()
+        .join(", ")
+}
+
+/// Render `<prefix><count> <name>, ...` from the non-zero counts of `entries`,
+/// or [`None`] when every count is zero.
+fn counted_clause(prefix: &str, entries: &[(usize, &str)]) -> Option<String> {
+    let body = counted_list(entries);
+
+    if body.is_empty() {
+        None
+    } else {
+        Some(format!("{prefix}{body}."))
+    }
 }
 
 /// Wrap `text` to `width`, indenting every line with `indent` spaces.

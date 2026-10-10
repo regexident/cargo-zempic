@@ -4,6 +4,14 @@ use crate::finding::{Finding, Magnitude, Severity, Tier};
 
 pub mod human;
 
+/// The statement every renderer carries about what a magnitude is.
+///
+/// Magnitude is an ordinal class, not a measurement, and zempic reads no
+/// compiled artifact, so the report states this plainly rather than leaving
+/// the reader to infer it. The legend is mandatory in every renderer: the text
+/// is shared from here so the three cannot drift.
+pub const MAGNITUDE_LEGEND: &str = "Magnitude is an ordinal judgement, not a measurement. zempic does not build and does not read compiled artifacts, so it reports no sizes.";
+
 /// How many findings carry each severity.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SeverityCounts {
