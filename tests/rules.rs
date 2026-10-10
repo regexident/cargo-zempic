@@ -1181,3 +1181,82 @@ fn human_renderer_always_emits_the_magnitude_legend() {
         assert!(rendered.contains("reports no sizes"), "{rendered}");
     }
 }
+
+/// A report carrying five findings across three tiers, for the quiet tests.
+fn five_finding_report() -> cargo_zempic::report::Report {
+    use cargo_zempic::finding::{Magnitude, Severity, Tier};
+
+    report_of(vec![
+        finding(
+            "profile/strip",
+            Tier::Foundational,
+            Severity::High,
+            Magnitude::Large,
+            None,
+        ),
+        finding(
+            "profile/debug-info",
+            Tier::Foundational,
+            Severity::High,
+            Magnitude::Moderate,
+            None,
+        ),
+        finding(
+            "profile/lto",
+            Tier::Compiler,
+            Severity::Medium,
+            Magnitude::Moderate,
+            None,
+        ),
+        finding(
+            "deps/duplicate-versions",
+            Tier::Dependencies,
+            Severity::Medium,
+            Magnitude::Moderate,
+            None,
+        ),
+        finding(
+            "deps/workspace-resolver",
+            Tier::Dependencies,
+            Severity::High,
+            Magnitude::Moderate,
+            None,
+        ),
+    ])
+}
+
+#[test]
+fn quiet_renderer_emits_one_line_per_finding() {
+    let report = five_finding_report();
+
+    let rendered = cargo_zempic::report::human::render_quiet(&report, false, 80);
+
+    for rule in [
+        "profile/strip",
+        "profile/debug-info",
+        "profile/lto",
+        "deps/duplicate-versions",
+        "deps/workspace-resolver",
+    ] {
+        assert!(
+            rendered.lines().any(|line| line.starts_with(rule)),
+            "`{rule}` must start a line: {rendered}"
+        );
+    }
+
+    assert!(!rendered.contains("workspace:"), "{rendered}");
+    assert!(!rendered.contains("TIER 1"), "{rendered}");
+    assert!(!rendered.contains("Tradeoff:"), "{rendered}");
+    assert!(!rendered.contains("effort:"), "{rendered}");
+}
+
+#[test]
+fn quiet_renderer_keeps_the_summary_and_the_legend() {
+    let report = five_finding_report();
+
+    let rendered = cargo_zempic::report::human::render_quiet(&report, false, 80);
+
+    assert!(rendered.contains("SUMMARY"), "{rendered}");
+    assert!(rendered.contains("5 findings:"), "{rendered}");
+    assert!(rendered.contains("ordinal judgement"), "{rendered}");
+}

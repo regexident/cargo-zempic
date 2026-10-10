@@ -37,6 +37,80 @@ pub fn render(report: &Report, color: bool, width: usize) -> String {
     output
 }
 
+/// Render `report` as one line per finding, with the summary and the legend.
+///
+/// The quiet form drops the header block, the tier headings and each finding's
+/// detail, tradeoff and metadata line; the summary and the legend remain,
+/// because the legend is mandatory in every renderer. Conflicts are rendered as
+/// in the full form: a conflict is not a finding and the block is the only form
+/// it has.
+pub fn render_quiet(report: &Report, color: bool, width: usize) -> String {
+    let mut output = String::new();
+
+    if report.is_empty() {
+        output.push_str("No findings.\n");
+        output.push_str(&render_legend(width));
+
+        return output;
+    }
+
+    for finding in &report.findings {
+        output.push_str(&render_quiet_line(finding, &report.resolution, color));
+    }
+
+    output.push_str(&render_conflicts(report));
+    output.push_str(&render_summary(report));
+    output.push_str(&render_legend(width));
+
+    output
+}
+
+/// Render one quiet line: the rule identifier, severity, magnitude, location
+/// and change column, each separated by two spaces.
+fn render_quiet_line(finding: &Finding, resolution: &Resolution, color: bool) -> String {
+    let severity = finding.severity.as_str().to_uppercase();
+    let severity = if color {
+        format!("{}{severity}{RESET}", severity_color(finding.severity))
+    } else {
+        severity
+    };
+
+    let rule = finding.rule.to_string();
+    let rule = if color {
+        format!("{BOLD}{rule}{RESET}")
+    } else {
+        rule
+    };
+
+    let location = finding
+        .location
+        .as_ref()
+        .map_or_else(String::new, |location| {
+            format!(
+                "{}:{}",
+                relativize(&location.span.file, resolution),
+                location.span.line
+            )
+        });
+
+    let change = finding.change.as_ref().map_or_else(String::new, |change| {
+        format!("{} -> {}", change.current, change.recommended)
+    });
+
+    let mut fields = vec![rule, severity, finding.magnitude.as_str().to_owned()];
+    fields.retain(|field| !field.is_empty());
+
+    if !location.is_empty() {
+        fields.push(location);
+    }
+
+    if !change.is_empty() {
+        fields.push(change);
+    }
+
+    format!("{}\n", fields.join("  "))
+}
+
 /// Render the report header naming where the analysis ran.
 ///
 /// The header states the workspace and its member counts, the profile with its
@@ -195,15 +269,20 @@ fn right_column(finding: &Finding, resolution: &Resolution) -> String {
     }
 
     match &finding.location {
-        Some(location) => location
-            .span
-            .file
-            .strip_prefix(&resolution.workspace_root)
-            .map(camino::Utf8Path::to_owned)
-            .unwrap_or_else(|_| location.span.file.clone())
-            .into_string(),
+        Some(location) => relativize(&location.span.file, resolution),
         None => String::new(),
     }
+}
+
+/// Render a finding's file relative to the workspace root.
+///
+/// Falls back to the absolute path when the file lies outside the root, which
+/// is the case a path such as `$CARGO_HOME/config.toml` reaches.
+fn relativize(file: &camino::Utf8Path, resolution: &Resolution) -> String {
+    file.strip_prefix(&resolution.workspace_root)
+        .map(camino::Utf8Path::to_owned)
+        .unwrap_or_else(|_| file.to_owned())
+        .into_string()
 }
 
 /// Render the conflict blocks that follow the tier sections.
