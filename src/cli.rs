@@ -25,6 +25,15 @@ fn dimension_parser() -> clap::builder::ValueParser {
         .into()
 }
 
+/// Builds the parser for a `--ignore`/`--only` selector.
+///
+/// The value is parsed by [`Selector::parse`] at argument-parsing time, so a
+/// malformed selector fails before any workspace is read and the diagnostic
+/// names the offending value rather than surfacing after metadata loading.
+fn selector_parser() -> clap::builder::ValueParser {
+    clap::builder::ValueParser::new(crate::finding::Selector::parse)
+}
+
 /// The parsed command line, root of the argument grammar.
 #[derive(Parser, Clone, PartialEq, Eq, Debug)]
 #[command(version = env!("CARGO_PKG_VERSION"))]
@@ -117,6 +126,24 @@ pub struct AnalysisArgs {
     #[arg(long = "target", value_name = "TRIPLE")]
     pub target: Option<String>,
 
+    /// Selectors whose matching rules are suppressed. A rule named by `--only`
+    /// is reported even when an ignore would otherwise suppress it.
+    #[arg(long = "ignore", value_name = "SELECTOR", value_parser = selector_parser())]
+    pub ignore: Vec<crate::finding::Selector>,
+
+    /// Restrict the run to matching rules. A rule named here is reported even
+    /// when an ignore would otherwise suppress it.
+    #[arg(long = "only", value_name = "SELECTOR", value_parser = selector_parser())]
+    pub only: Vec<crate::finding::Selector>,
+
+    /// Include advisory and report-only findings.
+    #[arg(long = "include-advisory", overrides_with = "no_include_advisory")]
+    pub include_advisory: bool,
+
+    /// Suppress both the advisory notes and every report-only finding.
+    #[arg(long = "no-include-advisory")]
+    pub no_include_advisory: bool,
+
     /// Cargo's target-selection flags, declared only to be rejected.
     #[command(flatten)]
     pub rejected: reject::RejectedTargetArgs,
@@ -152,7 +179,21 @@ impl From<&AnalysisArgs> for AnalysisConfig {
                 no_default_features: args.no_default_features,
             },
             target: args.target.clone(),
-            gates: crate::config::Gates::default(),
+            gates: crate::config::Gates {
+                ignore: args
+                    .ignore
+                    .iter()
+                    .map(|selector| crate::config::IgnoreRule {
+                        selector: selector.clone(),
+                        text: selector.text(),
+                        reason: None,
+                        packages: None,
+                        expires: None,
+                    })
+                    .collect(),
+                only: args.only.clone(),
+                include_advisory: !args.no_include_advisory,
+            },
             today: crate::config::CivilDate::today(),
         }
     }
@@ -271,6 +312,11 @@ mod tests {
             "--no-default-features",
             "--target",
             "x86_64-unknown-linux-gnu",
+            "--ignore",
+            "profile/lto",
+            "--only",
+            "profile",
+            "--no-include-advisory",
         ])
         .expect("a full invocation parses");
 
@@ -293,9 +339,38 @@ mod tests {
                     no_default_features: true,
                 },
                 target: Some("x86_64-unknown-linux-gnu".to_owned()),
-                gates: crate::config::Gates::default(),
+                gates: crate::config::Gates {
+                    ignore: vec![crate::config::IgnoreRule {
+                        selector: crate::finding::Selector::parse("profile/lto").unwrap(),
+                        text: "profile/lto".to_owned(),
+                        reason: None,
+                        packages: None,
+                        expires: None,
+                    }],
+                    only: vec![crate::finding::Selector::parse("profile").unwrap()],
+                    include_advisory: false,
+                },
                 today: crate::config::CivilDate::today(),
             }
+        );
+    }
+
+    #[test]
+    fn include_advisory_defaults_to_true() {
+        let default =
+            Args::try_parse_from(["cargo-zempic", "check"]).expect("a plain check parses");
+        let negated = Args::try_parse_from(["cargo-zempic", "check", "--no-include-advisory"])
+            .expect("the negation parses");
+
+        assert!(
+            AnalysisConfig::from(analysis(&default))
+                .gates
+                .include_advisory
+        );
+        assert!(
+            !AnalysisConfig::from(analysis(&negated))
+                .gates
+                .include_advisory
         );
     }
 
