@@ -34,6 +34,41 @@ fn selector_parser() -> clap::builder::ValueParser {
     clap::builder::ValueParser::new(crate::finding::Selector::parse)
 }
 
+/// Builds the parser for `--format`.
+///
+/// Parsing at argument-parsing time rejects an unrecognized format before
+/// `cargo metadata` runs, with the offending value named.
+fn format_parser() -> clap::builder::ValueParser {
+    clap::builder::ValueParser::new(|name: &str| {
+        crate::report::Format::from_name(name)
+            .ok_or_else(|| format!("`{name}` is not a format; expected human, json or markdown"))
+    })
+}
+
+/// Builds the parser for `--fail-on`.
+///
+/// Parsing at argument-parsing time rejects an unrecognized threshold before
+/// `cargo metadata` runs, with the offending value named.
+fn fail_on_parser() -> clap::builder::ValueParser {
+    clap::builder::ValueParser::new(|name: &str| {
+        crate::report::FailOn::from_name(name).ok_or_else(|| {
+            format!("`{name}` is not a threshold; expected never, low, medium or high")
+        })
+    })
+}
+
+/// Builds the parser for `--color`.
+///
+/// Parsing at argument-parsing time rejects an unrecognized choice before
+/// `cargo metadata` runs, with the offending value named.
+fn color_parser() -> clap::builder::ValueParser {
+    clap::builder::ValueParser::new(|name: &str| {
+        crate::report::ColorChoice::from_name(name).ok_or_else(|| {
+            format!("`{name}` is not a color choice; expected auto, always or never")
+        })
+    })
+}
+
 /// The parsed command line, root of the argument grammar.
 #[derive(Parser, Clone, PartialEq, Eq, Debug)]
 #[command(version = env!("CARGO_PKG_VERSION"))]
@@ -126,6 +161,29 @@ pub struct AnalysisArgs {
     #[arg(long = "target", value_name = "TRIPLE")]
     pub target: Option<String>,
 
+    /// The report format. Overrides the `[report] format` of `zempic.toml`.
+    #[arg(long = "format", value_name = "FMT", value_parser = format_parser())]
+    pub format: Option<crate::report::Format>,
+
+    /// The severity that gates a non-zero exit code. Overrides the
+    /// `[report] fail_on` of `zempic.toml`.
+    #[arg(long = "fail-on", value_name = "SEVERITY", value_parser = fail_on_parser())]
+    pub fail_on: Option<crate::report::FailOn>,
+
+    /// Render one line per finding, without the header, tier headings or the
+    /// per-finding detail, tradeoff and metadata lines.
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
+    /// When to color the report. `auto` honors `NO_COLOR` and `CLICOLOR`.
+    #[arg(
+        long = "color",
+        value_name = "WHEN",
+        default_value = "auto",
+        value_parser = color_parser(),
+    )]
+    pub color: crate::report::ColorChoice,
+
     /// Selectors whose matching rules are suppressed. A rule named by `--only`
     /// is reported even when an ignore would otherwise suppress it.
     #[arg(long = "ignore", value_name = "SELECTOR", value_parser = selector_parser())]
@@ -179,6 +237,9 @@ impl From<&AnalysisArgs> for AnalysisConfig {
                 no_default_features: args.no_default_features,
             },
             target: args.target.clone(),
+            format: args.format,
+            fail_on: args.fail_on,
+            quiet: args.quiet,
             gates: crate::config::Gates {
                 ignore: args
                     .ignore
@@ -339,6 +400,9 @@ mod tests {
                     no_default_features: true,
                 },
                 target: Some("x86_64-unknown-linux-gnu".to_owned()),
+                format: None,
+                fail_on: None,
+                quiet: false,
                 gates: crate::config::Gates {
                     ignore: vec![crate::config::IgnoreRule {
                         selector: crate::finding::Selector::parse("profile/lto").unwrap(),
@@ -421,5 +485,53 @@ mod tests {
         let args = Args::try_parse_from(["cargo-zempic", "check"]).expect("a plain check parses");
 
         assert!(super::validate(analysis(&args)).is_ok());
+    }
+
+    #[test]
+    fn output_arguments_convert_into_the_analysis_config() {
+        let selected = Args::try_parse_from([
+            "cargo-zempic",
+            "check",
+            "--format",
+            "json",
+            "--fail-on",
+            "medium",
+            "--quiet",
+        ])
+        .expect("the output arguments parse");
+        let plain = Args::try_parse_from(["cargo-zempic", "check"]).expect("a plain check parses");
+
+        let selected = AnalysisConfig::from(analysis(&selected));
+        let plain = AnalysisConfig::from(analysis(&plain));
+
+        assert_eq!(selected.format, Some(crate::report::Format::Json));
+        assert_eq!(selected.fail_on, Some(crate::report::FailOn::Medium));
+        assert!(selected.quiet);
+
+        // No default value may supply a format or threshold: a clap default is
+        // indistinguishable from a user selection and would silently defeat
+        // `[report]` in "zempic.toml".
+        assert_eq!(plain.format, None);
+        assert_eq!(plain.fail_on, None);
+        assert!(!plain.quiet);
+    }
+
+    #[test]
+    fn color_defaults_to_auto_and_parses_each_choice() {
+        let default =
+            Args::try_parse_from(["cargo-zempic", "check"]).expect("a plain check parses");
+
+        assert_eq!(analysis(&default).color, crate::report::ColorChoice::Auto);
+
+        for (name, expected) in [
+            ("auto", crate::report::ColorChoice::Auto),
+            ("always", crate::report::ColorChoice::Always),
+            ("never", crate::report::ColorChoice::Never),
+        ] {
+            let args = Args::try_parse_from(["cargo-zempic", "check", "--color", name])
+                .expect("a color choice parses");
+
+            assert_eq!(analysis(&args).color, expected);
+        }
     }
 }

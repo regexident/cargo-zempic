@@ -295,3 +295,18 @@ fn invalid_configuration_exits_two_naming_the_file() {
         .code(2)
         .stderr(predicate::str::contains("zempic.toml").and(predicate::str::contains("nonsense")));
 }
+
+#[test]
+fn unknown_output_argument_values_exit_two_naming_the_value() {
+    for (flag, value) in [
+        ("--format", "nonsense"),
+        ("--fail-on", "critical"),
+        ("--color", "sometimes"),
+    ] {
+        binary()
+            .args(["check", flag, value])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(value));
+    }
+}

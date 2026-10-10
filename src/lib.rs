@@ -233,6 +233,14 @@ pub struct AnalysisConfig {
     pub features: workspace::FeatureSelection,
     /// The target triple to resolve for, or the host's when unset.
     pub target: Option<String>,
+    /// The output format the command line selected, or [`None`] when it did not
+    /// and the configuration file may supply one.
+    pub format: Option<report::Format>,
+    /// The gate threshold the command line selected, or [`None`] when it did not
+    /// and the configuration file may supply one.
+    pub fail_on: Option<report::FailOn>,
+    /// Whether findings render one per line.
+    pub quiet: bool,
     /// The gates deciding which findings a run reports.
     pub gates: config::Gates,
     /// The current date, supplied by the caller so ignore expiry is
@@ -358,6 +366,20 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
 
     let file_config = config::discover(&resolution.workspace_root, &package_directories)?;
 
+    // The configured format and threshold are the base the command line merges
+    // over; `None` from the command line means the file, or the default, wins.
+    let settings = report::ReportSettings {
+        format: config
+            .format
+            .or(file_config.report.format)
+            .unwrap_or_default(),
+        fail_on: config
+            .fail_on
+            .or(file_config.report.fail_on)
+            .unwrap_or_default(),
+        quiet: config.quiet,
+    };
+
     let effective_gates = config::Gates {
         ignore: file_config
             .ignore
@@ -371,7 +393,13 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
     let findings: Vec<finding::Finding> = Vec::new();
     let filtered = config::filter(findings, &effective_gates, config.today);
 
-    report::Report::new(resolution, filtered.findings, Vec::new(), filtered.notices)
+    report::Report::new(
+        resolution,
+        filtered.findings,
+        Vec::new(),
+        filtered.notices,
+        settings,
+    )
 }
 
 /// Builds the [`workspace::MetadataQuery`] a configuration resolves through.
@@ -405,6 +433,9 @@ mod tests {
             profile: "release".to_owned(),
             features: workspace::FeatureSelection::default(),
             target: Some("aarch64-unknown-linux-gnu".to_owned()),
+            format: None,
+            fail_on: None,
+            quiet: false,
             gates: crate::config::Gates::default(),
             today: crate::config::CivilDate::today(),
         };

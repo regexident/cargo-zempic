@@ -124,6 +124,8 @@ pub struct Report {
     pub conflicts: Vec<crate::finding::Conflict>,
     /// The configuration notices raised.
     pub notices: Vec<Notice>,
+    /// The settings the run resolved from the command line and configuration.
+    pub settings: ReportSettings,
     /// The summary counts.
     pub summary: Summary,
 }
@@ -146,6 +148,7 @@ impl Report {
         mut findings: Vec<Finding>,
         conflicts: Vec<crate::finding::Conflict>,
         notices: Vec<Notice>,
+        settings: ReportSettings,
     ) -> crate::Result<Self> {
         for finding in &findings {
             if !finding.tradeoff_is_present() {
@@ -164,6 +167,7 @@ impl Report {
             findings,
             conflicts,
             notices,
+            settings,
             summary,
         })
     }
@@ -300,10 +304,60 @@ impl FailOn {
     }
 }
 
+/// The output settings a run resolved from the command line and configuration.
+///
+/// The format and threshold are resolved by [`analyze`](crate::analyze), which
+/// is the only place the configuration file is read, so a report carries the
+/// effective values rather than the inputs they were resolved from. The color
+/// choice is not a field: color depends on the process environment and the
+/// terminal rather than on the analysis, so the binary resolves it directly.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReportSettings {
+    /// The output format the run renders.
+    pub format: Format,
+    /// The severity at which a finding gates a non-zero exit code.
+    pub fail_on: FailOn,
+    /// Whether findings render one per line.
+    pub quiet: bool,
+}
+
+/// When color is used in a rendered report.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColorChoice {
+    /// Use color only when the environment and the terminal permit it.
+    #[default]
+    Auto,
+    /// Use color regardless of the environment.
+    Always,
+    /// Use no color regardless of the environment.
+    Never,
+}
+
+impl ColorChoice {
+    /// The name this choice is selected by on the command line.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ColorChoice::Auto => "auto",
+            ColorChoice::Always => "always",
+            ColorChoice::Never => "never",
+        }
+    }
+
+    /// The choice a name selects, or [`None`] when no choice carries it.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "auto" => Some(ColorChoice::Auto),
+            "always" => Some(ColorChoice::Always),
+            "never" => Some(ColorChoice::Never),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
-    use super::{FailOn, MagnitudeCounts, Report, SeverityCounts, Summary};
+    use super::{FailOn, MagnitudeCounts, Report, ReportSettings, SeverityCounts, Summary};
     use crate::Resolution;
     use crate::dimension::Dimension;
     use crate::finding::{
@@ -405,7 +459,14 @@ mod tests {
             ),
         ];
 
-        let report = Report::new(resolution(), findings, Vec::new(), Vec::new()).unwrap();
+        let report = Report::new(
+            resolution(),
+            findings,
+            Vec::new(),
+            Vec::new(),
+            ReportSettings::default(),
+        )
+        .unwrap();
 
         assert_eq!(
             rules(&report),
@@ -463,8 +524,22 @@ mod tests {
             ),
         ];
 
-        let forward = Report::new(resolution(), forward, Vec::new(), Vec::new()).unwrap();
-        let reversed = Report::new(resolution(), reversed, Vec::new(), Vec::new()).unwrap();
+        let forward = Report::new(
+            resolution(),
+            forward,
+            Vec::new(),
+            Vec::new(),
+            ReportSettings::default(),
+        )
+        .unwrap();
+        let reversed = Report::new(
+            resolution(),
+            reversed,
+            Vec::new(),
+            Vec::new(),
+            ReportSettings::default(),
+        )
+        .unwrap();
 
         assert_eq!(rules(&forward), ["profile/a", "profile/b", "profile/c"]);
         assert_eq!(rules(&reversed), ["profile/a", "profile/b", "profile/c"]);
@@ -510,7 +585,14 @@ mod tests {
             ),
         ];
 
-        let report = Report::new(resolution(), findings, Vec::new(), Vec::new()).unwrap();
+        let report = Report::new(
+            resolution(),
+            findings,
+            Vec::new(),
+            Vec::new(),
+            ReportSettings::default(),
+        )
+        .unwrap();
 
         assert_eq!(
             report.summary,
@@ -544,8 +626,14 @@ mod tests {
         );
         blank.tradeoff = "   ".to_owned();
 
-        let error = Report::new(resolution(), vec![blank], Vec::new(), Vec::new())
-            .expect_err("a blank tradeoff is rejected");
+        let error = Report::new(
+            resolution(),
+            vec![blank],
+            Vec::new(),
+            Vec::new(),
+            ReportSettings::default(),
+        )
+        .expect_err("a blank tradeoff is rejected");
 
         assert!(matches!(error, crate::ZempicError::MissingTradeoff { .. }));
         assert!(error.to_string().contains("profile/strip"));

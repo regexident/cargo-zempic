@@ -435,6 +435,9 @@ fn analysis_config(workspace: &common::MaterializedWorkspace) -> AnalysisConfig 
         profile: "release".to_owned(),
         features: FeatureSelection::default(),
         target: None,
+        format: None,
+        fail_on: None,
+        quiet: false,
         gates: cargo_zempic::config::Gates::default(),
         today: cargo_zempic::config::CivilDate::today(),
     }
@@ -449,6 +452,9 @@ fn analyze_config(workspace: &common::MaterializedWorkspace, only: &[&str]) -> A
         profile: "release".to_owned(),
         features: FeatureSelection::default(),
         target: None,
+        format: None,
+        fail_on: None,
+        quiet: false,
         gates: cargo_zempic::config::Gates {
             ignore: Vec::new(),
             only: only
