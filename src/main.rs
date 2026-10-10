@@ -8,7 +8,8 @@
 use anyhow::Context;
 use cargo_zempic::cli::{Args, Command};
 use cargo_zempic::profile::ResolvedProfile;
-use cargo_zempic::{AnalysisConfig, Resolution, resolve};
+use cargo_zempic::report::Report;
+use cargo_zempic::{AnalysisConfig, Resolution, analyze};
 use clap::Parser;
 use std::process::ExitCode;
 
@@ -31,10 +32,12 @@ fn main() -> ExitCode {
 
 /// Runs `check` and renders its report to stdout.
 ///
+/// Configuration notices go to stderr so a piped report on stdout stays clean.
+///
 /// # Errors
 ///
 /// Returns an error when a rejected target-selection flag is present, when the
-/// analysis arguments cannot be converted, or when [`resolve`] fails; the error
+/// analysis arguments cannot be converted, or when [`analyze`] fails; the error
 /// chain carries the full context for the boundary to print.
 fn run(args: Args) -> anyhow::Result<()> {
     match args.command {
@@ -42,12 +45,30 @@ fn run(args: Args) -> anyhow::Result<()> {
             cargo_zempic::cli::validate(&check_args.analysis).map_err(anyhow::Error::msg)?;
 
             let config = AnalysisConfig::from(&check_args.analysis);
-            let resolution = resolve(&config).context("failed to resolve the workspace")?;
+            let report = analyze(&config).context("failed to analyze the workspace")?;
 
-            print!("{}", render_resolution(&resolution));
+            print!("{}", render_resolution(&report.resolution));
+            print!("{}", render_findings(&report));
+
+            for notice in &report.notices {
+                eprintln!("{}", notice.message());
+            }
 
             Ok(())
         }
+    }
+}
+
+/// Renders the line stating whether the report carries findings.
+///
+/// With no findings the line is exactly `No findings.`; otherwise it states the
+/// finding count and nothing more. Severity breakdowns, magnitudes and the
+/// magnitude legend are rendered by the report renderer, not here.
+fn render_findings(report: &Report) -> String {
+    if report.is_empty() {
+        "No findings.\n".to_owned()
+    } else {
+        format!("{} findings.\n", report.findings.len())
     }
 }
 

@@ -194,3 +194,104 @@ fn output_contains_no_size_figure() {
         }
     }
 }
+
+#[test]
+fn gating_arguments_are_accepted() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    binary()
+        .args([
+            "check",
+            "--manifest-path",
+            workspace.manifest_path().as_str(),
+            "--ignore",
+            "profile/lto",
+            "--only",
+            "profile",
+            "--no-include-advisory",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("No findings."));
+}
+
+#[test]
+fn malformed_selector_exits_two_naming_the_value() {
+    binary()
+        .args(["check", "--ignore", "Profile/LTO"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("Profile/LTO"));
+}
+
+#[test]
+fn check_reports_that_there_are_no_findings() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    let assert = binary()
+        .args([
+            "check",
+            "--manifest-path",
+            workspace.manifest_path().as_str(),
+        ])
+        .assert()
+        .code(0);
+
+    assert.stdout(
+        predicate::str::contains("No findings.")
+            .and(predicate::str::contains("%").not())
+            .and(predicate::str::contains("KB").not())
+            .and(predicate::str::contains("KiB").not())
+            .and(predicate::str::contains("MB").not())
+            .and(predicate::str::contains("MiB").not())
+            .and(predicate::str::contains("GB").not())
+            .and(predicate::str::contains("GiB").not())
+            .and(predicate::str::contains("bytes").not()),
+    );
+}
+
+#[test]
+fn expired_ignore_warns_on_stderr_and_still_exits_zero() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    std::fs::write(
+        workspace.root().join("zempic.toml"),
+        "schema_version = 1\n\n[[ignore]]\nrule = \"profile/lto\"\nexpires = \"2020-01-01\"\n",
+    )
+    .unwrap();
+
+    binary()
+        .args([
+            "check",
+            "--manifest-path",
+            workspace.manifest_path().as_str(),
+        ])
+        .assert()
+        .code(0)
+        .stderr(
+            predicate::str::contains("profile/lto")
+                .and(predicate::str::contains("expired"))
+                .and(predicate::str::contains("reason")),
+        );
+}
+
+#[test]
+fn invalid_configuration_exits_two_naming_the_file() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    std::fs::write(
+        workspace.root().join("zempic.toml"),
+        "schema_version = 1\n\n[analysis]\nnonsense = true\n",
+    )
+    .unwrap();
+
+    binary()
+        .args([
+            "check",
+            "--manifest-path",
+            workspace.manifest_path().as_str(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("zempic.toml").and(predicate::str::contains("nonsense")));
+}
