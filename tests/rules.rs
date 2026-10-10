@@ -1260,3 +1260,163 @@ fn quiet_renderer_keeps_the_summary_and_the_legend() {
     assert!(rendered.contains("5 findings:"), "{rendered}");
     assert!(rendered.contains("ordinal judgement"), "{rendered}");
 }
+
+/// Assert the keys appear in `text` in exactly the order `keys` lists.
+///
+/// `serde_json::Value` does not preserve object key order without the
+/// `preserve_order` feature, so the order is checked against the rendered text
+/// by locating each key's quoted occurrence, ascending.
+fn assert_key_order(text: &str, keys: &[String]) {
+    let mut previous = 0;
+
+    for key in keys {
+        let needle = format!("\"{key}\"");
+        let found = text[previous..]
+            .find(&needle)
+            .unwrap_or_else(|| panic!("key `{key}` not found after byte {previous}: {text}"));
+
+        previous += found;
+    }
+}
+
+/// The checked-in key sets of the JSON report fixture.
+fn schema_fixture() -> serde_json::Value {
+    let path = camino::Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/schema/report.schema.json");
+    let text = std::fs::read_to_string(&path).expect("the schema fixture is checked in");
+
+    serde_json::from_str(&text).expect("the schema fixture is valid JSON")
+}
+
+/// The key names of an array in the schema fixture.
+fn fixture_keys(fixture: &serde_json::Value, name: &str) -> Vec<String> {
+    fixture[name]
+        .as_array()
+        .unwrap_or_else(|| panic!("`{name}` is an array"))
+        .iter()
+        .map(|key| key.as_str().expect("a key name is a string").to_owned())
+        .collect()
+}
+
+/// A report with one finding carrying a qualified rule, a change, a package
+/// and a location, for the JSON key-set tests.
+fn json_report() -> cargo_zempic::report::Report {
+    use cargo_zempic::finding::{
+        Change, Confidence, Effort, Fixability, Magnitude, RuleId, RuntimeCost, Severity, Tier,
+    };
+
+    let resolution = fixture_resolution();
+    let with_everything = cargo_zempic::finding::Finding {
+        rule: RuleId::parse("profile/opt-level:size").unwrap(),
+        package: Some("alpha".to_owned()),
+        tier: Tier::Compiler,
+        severity: Severity::High,
+        magnitude: Magnitude::Large,
+        confidence: Confidence::High,
+        effort: Effort::Moderate,
+        runtime_cost: RuntimeCost::Minor,
+        fixability: Fixability::Consequential,
+        change: Some(Change {
+            current: "3".to_owned(),
+            recommended: "\"z\"".to_owned(),
+        }),
+        location: Some(cargo_zempic::finding::Location::new(span_in(
+            &resolution.workspace_root,
+            "Cargo.toml",
+            12,
+        ))),
+        title: "Opt level".to_owned(),
+        detail: "detail".to_owned(),
+        tradeoff: "tradeoff".to_owned(),
+        references: vec!["https://example.invalid".to_owned()],
+    };
+    let next = finding(
+        "profile/lto",
+        Tier::Compiler,
+        Severity::Medium,
+        Magnitude::Moderate,
+        None,
+    );
+    let mut without = finding(
+        "deps/duplicate-versions",
+        Tier::Dependencies,
+        Severity::Medium,
+        Magnitude::Moderate,
+        None,
+    );
+    without.change = None;
+    without.package = None;
+    without.location = None;
+
+    cargo_zempic::report::Report::new(
+        resolution,
+        vec![with_everything, next, without],
+        Vec::new(),
+        Vec::new(),
+        cargo_zempic::report::ReportSettings::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn json_document_matches_the_checked_in_key_sets() {
+    let report = json_report();
+    let document = cargo_zempic::report::json::render(&report).expect("the document renders");
+
+    let fixture = schema_fixture();
+
+    assert_key_order(&document, &fixture_keys(&fixture, "document"));
+
+    // The first finding is the one built to carry every field.
+    let findings_start = document.find("\"findings\"").expect("findings present");
+    assert_key_order(
+        &document[findings_start..],
+        &fixture_keys(&fixture, "finding"),
+    );
+
+    let summary_start = document.find("\"summary\"").expect("summary present");
+    assert_key_order(
+        &document[summary_start..],
+        &fixture_keys(&fixture, "summary"),
+    );
+
+    assert!(document.contains("\"schema_version\": 1"), "{document}");
+    assert!(document.ends_with("}\n"), "{document}");
+}
+
+#[test]
+fn json_document_splits_the_rule_path_from_its_dimension() {
+    let report = json_report();
+    let document = cargo_zempic::report::json::render(&report).expect("the document renders");
+    let parsed: serde_json::Value = serde_json::from_str(&document).expect("the document is JSON");
+
+    let first = &parsed["findings"][0];
+
+    assert_eq!(first["rule"], "profile/opt-level");
+    assert_eq!(first["dimension"], "size");
+    assert_eq!(first["package"], "alpha");
+    assert_eq!(first["change"]["current"], "3");
+    assert_eq!(first["change"]["recommended"], "\"z\"");
+    assert_eq!(first["location"]["file"], "Cargo.toml");
+    assert_eq!(first["location"]["line"], 12);
+
+    let third = &parsed["findings"][2];
+    assert!(third["change"].is_null(), "{third}");
+    assert!(third["package"].is_null(), "{third}");
+    assert!(third["location"].is_null(), "{third}");
+}
+
+#[test]
+fn json_document_omits_the_knowledge_base_version() {
+    let report = json_report();
+    let document = cargo_zempic::report::json::render(&report).expect("the document renders");
+    let parsed: serde_json::Value = serde_json::from_str(&document).expect("the document is JSON");
+
+    assert!(parsed.get("kb_version").is_none(), "{document}");
+    assert_eq!(parsed["schema_version"], 1);
+
+    // Every summary count is emitted, including zeros, so a machine consumer
+    // reads a fixed shape.
+    assert_eq!(parsed["summary"]["by_severity"]["info"], 0);
+    assert_eq!(parsed["summary"]["by_magnitude"]["none"], 0);
+}

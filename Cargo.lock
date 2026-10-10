@@ -134,6 +134,7 @@ dependencies = [
  "clap",
  "predicates",
  "serde",
+ "serde_json",
  "tempfile",
  "terminal_size",
  "thiserror",

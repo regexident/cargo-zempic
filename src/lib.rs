@@ -131,6 +131,13 @@ pub enum ZempicError {
         rule: String,
     },
 
+    /// Serializing a report to JSON failed.
+    #[error("failed to serialize the report to JSON: {source}")]
+    ReportSerialize {
+        /// Underlying serialization failure.
+        source: serde_json::Error,
+    },
+
     /// A configuration file could not be read.
     #[error("failed to read configuration `{path}`: {source}")]
     ConfigRead {
