@@ -435,6 +435,29 @@ fn analysis_config(workspace: &common::MaterializedWorkspace) -> AnalysisConfig 
         profile: "release".to_owned(),
         features: FeatureSelection::default(),
         target: None,
+        gates: cargo_zempic::config::Gates::default(),
+        today: cargo_zempic::config::CivilDate::today(),
+    }
+}
+
+/// An analysis configuration for a workspace, with explicit gates and date.
+fn analyze_config(workspace: &common::MaterializedWorkspace, only: &[&str]) -> AnalysisConfig {
+    AnalysisConfig {
+        dimensions: vec![Dimension::Size],
+        manifest_path: Some(workspace.manifest_path()),
+        selection: PackageSelection::default(),
+        profile: "release".to_owned(),
+        features: FeatureSelection::default(),
+        target: None,
+        gates: cargo_zempic::config::Gates {
+            ignore: Vec::new(),
+            only: only
+                .iter()
+                .map(|text| cargo_zempic::finding::Selector::parse(text).unwrap())
+                .collect(),
+            include_advisory: true,
+        },
+        today: cargo_zempic::config::CivilDate::parse("2026-10-04").unwrap(),
     }
 }
 
@@ -749,4 +772,67 @@ fn config_discovery_merges_package_files_over_the_workspace_base() {
         .collect();
 
     assert_eq!(texts, ["profile/lto", "deps/default-features"]);
+}
+
+/// `analyze` returns a report over a real workspace, carrying the resolution it
+/// ran against and no findings.
+#[test]
+fn analyze_returns_an_empty_report_for_a_resolvable_workspace() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+    let config = analyze_config(&workspace, &[]);
+
+    let report = cargo_zempic::analyze(&config).expect("the analysis succeeds");
+
+    assert!(report.findings.is_empty());
+    assert!(report.conflicts.is_empty());
+    assert!(report.notices.is_empty());
+    assert_eq!(report.summary, cargo_zempic::report::Summary::default());
+    assert!(report.is_empty());
+    assert_eq!(report.resolution.workspace_root, workspace.root());
+}
+
+/// `analyze` surfaces the notices of the workspace configuration.
+#[test]
+fn analyze_surfaces_notices_from_the_workspace_configuration() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    std::fs::write(
+        workspace.root().join("zempic.toml"),
+        "schema_version = 1\n\n[[ignore]]\nrule = \"profile/lto\"\nexpires = \"2026-10-03\"\n",
+    )
+    .unwrap();
+
+    let report = cargo_zempic::analyze(&analyze_config(&workspace, &[])).expect("analyze runs");
+
+    assert_eq!(
+        report.notices,
+        vec![
+            cargo_zempic::report::Notice::ExpiredIgnore {
+                selector: "profile/lto".to_owned(),
+                expired: "2026-10-03".to_owned(),
+            },
+            cargo_zempic::report::Notice::UndocumentedIgnore {
+                selector: "profile/lto".to_owned(),
+            },
+        ]
+    );
+}
+
+/// `analyze` fails with the file named when the workspace configuration is
+/// invalid.
+#[test]
+fn analyze_fails_when_the_workspace_configuration_is_invalid() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    std::fs::write(
+        workspace.root().join("zempic.toml"),
+        "schema_version = 1\n\n[analysis]\nnonsense = true\n",
+    )
+    .unwrap();
+
+    let error = cargo_zempic::analyze(&analyze_config(&workspace, &[]))
+        .expect_err("the invalid configuration fails the analysis");
+
+    assert!(error.to_string().contains("zempic.toml"));
+    assert!(error.to_string().contains("nonsense"));
 }

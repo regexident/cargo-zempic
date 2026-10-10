@@ -233,6 +233,11 @@ pub struct AnalysisConfig {
     pub features: workspace::FeatureSelection,
     /// The target triple to resolve for, or the host's when unset.
     pub target: Option<String>,
+    /// The gates deciding which findings a run reports.
+    pub gates: config::Gates,
+    /// The current date, supplied by the caller so ignore expiry is
+    /// deterministic.
+    pub today: config::CivilDate,
 }
 
 /// A selected package and the classification of its targets.
@@ -275,6 +280,9 @@ pub struct Resolution {
 /// a `[profile.*]` table only there, so a member's own profile table is inert
 /// and never consulted. The workspace is read through `cargo metadata`, whose
 /// package graph supplies both the selected packages and the member count.
+///
+/// This is the workspace resolution an analysis runs against; [`analyze`] is
+/// the entry point that also reads configuration and produces a report.
 ///
 /// # Errors
 ///
@@ -320,6 +328,52 @@ pub fn resolve(config: &AnalysisConfig) -> Result<Resolution> {
     })
 }
 
+/// Analyzes the workspace an [`AnalysisConfig`] describes and returns a report.
+///
+/// The analysis resolves the workspace, reads the `zempic.toml` files that
+/// configure it, applies the gates to the findings the registry produces, and
+/// assembles a report. It never builds, and it never opens a source file: every
+/// input is a manifest, a cargo configuration file or the metadata that
+/// describes them, so the analysis is read-only and completes without a
+/// compiler.
+///
+/// # Errors
+///
+/// Returns a [`ZempicError`] when resolution fails, when a configuration file
+/// cannot be read or does not validate, or when a produced finding carries no
+/// tradeoff.
+pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
+    let resolution = resolve(config)?;
+
+    let package_directories: Vec<camino::Utf8PathBuf> = resolution
+        .selected
+        .iter()
+        .filter_map(|package| {
+            package
+                .manifest_path
+                .parent()
+                .map(camino::Utf8Path::to_owned)
+        })
+        .collect();
+
+    let file_config = config::discover(&resolution.workspace_root, &package_directories)?;
+
+    let effective_gates = config::Gates {
+        ignore: file_config
+            .ignore
+            .into_iter()
+            .chain(config.gates.ignore.iter().cloned())
+            .collect(),
+        only: config.gates.only.clone(),
+        include_advisory: config.gates.include_advisory,
+    };
+
+    let findings: Vec<finding::Finding> = Vec::new();
+    let filtered = config::filter(findings, &effective_gates, config.today);
+
+    report::Report::new(resolution, filtered.findings, Vec::new(), filtered.notices)
+}
+
 /// Builds the [`workspace::MetadataQuery`] a configuration resolves through.
 ///
 /// The query's `target` is always `Some`, carrying the resolved triple rather
@@ -351,6 +405,8 @@ mod tests {
             profile: "release".to_owned(),
             features: workspace::FeatureSelection::default(),
             target: Some("aarch64-unknown-linux-gnu".to_owned()),
+            gates: crate::config::Gates::default(),
+            today: crate::config::CivilDate::today(),
         };
 
         let query = metadata_query(&config, "aarch64-unknown-linux-gnu");

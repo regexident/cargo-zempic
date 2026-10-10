@@ -152,6 +152,8 @@ impl From<&AnalysisArgs> for AnalysisConfig {
                 no_default_features: args.no_default_features,
             },
             target: args.target.clone(),
+            gates: crate::config::Gates::default(),
+            today: crate::config::CivilDate::today(),
         }
     }
 }
@@ -291,6 +293,8 @@ mod tests {
                     no_default_features: true,
                 },
                 target: Some("x86_64-unknown-linux-gnu".to_owned()),
+                gates: crate::config::Gates::default(),
+                today: crate::config::CivilDate::today(),
             }
         );
     }
