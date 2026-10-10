@@ -354,6 +354,105 @@ impl ColorChoice {
     }
 }
 
+/// The environment inputs that decide whether `--color auto` uses color.
+///
+/// The process environment is read through [`from_process`](Self::from_process)
+/// alone, so the decision in [`use_color`] is a pure function of its inputs and
+/// remains testable in parallel with other tests: the test harness runs tests in
+/// threads of one process, and mutating the environment from one test would be
+/// unsound while another reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ColorEnvironment {
+    /// The `NO_COLOR` variable, or [`None`] when it is unset.
+    pub no_color: Option<String>,
+    /// The `CLICOLOR` variable, or [`None`] when it is unset.
+    pub clicolor: Option<String>,
+    /// Whether standard output is a terminal.
+    pub is_terminal: bool,
+}
+
+impl ColorEnvironment {
+    /// Read the color environment, taking the terminal state as an input.
+    pub fn from_process(is_terminal: bool) -> Self {
+        Self {
+            no_color: std::env::var("NO_COLOR").ok(),
+            clicolor: std::env::var("CLICOLOR").ok(),
+            is_terminal,
+        }
+    }
+}
+
+/// Whether a report is rendered with color.
+///
+/// [`ColorChoice::Never`] yields `false` and [`ColorChoice::Always`] yields
+/// `true` regardless of the environment: an explicit request is the user
+/// overriding detection. [`ColorChoice::Auto`] yields `false` when `NO_COLOR` is
+/// set to a non-empty value, `false` when `CLICOLOR` is `0`, and otherwise
+/// follows whether standard output is a terminal.
+pub fn use_color(choice: ColorChoice, environment: &ColorEnvironment) -> bool {
+    match choice {
+        ColorChoice::Never => false,
+        ColorChoice::Always => true,
+        ColorChoice::Auto => {
+            let suppressed = environment
+                .no_color
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+                || environment.clicolor.as_deref() == Some("0");
+
+            !suppressed && environment.is_terminal
+        }
+    }
+}
+
+/// The width a report is rendered to when no terminal reports one.
+///
+/// A non-terminal has no width to offer, so output is fixed at this many
+/// columns to remain reproducible across runs and machines.
+pub const MINIMUM_WIDTH: usize = 80;
+
+/// The widest a report is rendered, however wide the terminal is.
+///
+/// A wide terminal is clamped to this many columns because an unreadably long
+/// line is worse than an unused margin.
+pub const MAXIMUM_WIDTH: usize = 100;
+
+/// The width a report is rendered to, clamped into
+/// `MINIMUM_WIDTH..=MAXIMUM_WIDTH`.
+///
+/// Falls back to [`MINIMUM_WIDTH`] when the terminal reports no size, which is
+/// the case under an integration-test harness.
+pub fn render_width() -> usize {
+    match terminal_size::terminal_size() {
+        Some((terminal_size::Width(width), _)) => width as usize,
+        None => MINIMUM_WIDTH,
+    }
+    .clamp(MINIMUM_WIDTH, MAXIMUM_WIDTH)
+}
+
+/// Reset any color or emphasis.
+pub const RESET: &str = "\x1b[0m";
+/// Render text in bold.
+pub const BOLD: &str = "\x1b[1m";
+/// Render text in red.
+pub const RED: &str = "\x1b[31m";
+/// Render text in yellow.
+pub const YELLOW: &str = "\x1b[33m";
+/// Render text in blue.
+pub const BLUE: &str = "\x1b[34m";
+/// Render text dimmed.
+pub const DIM: &str = "\x1b[2m";
+
+/// The color a severity is rendered in.
+pub fn severity_color(severity: Severity) -> &'static str {
+    match severity {
+        Severity::High => RED,
+        Severity::Medium => YELLOW,
+        Severity::Low => BLUE,
+        Severity::Info => DIM,
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -649,5 +748,70 @@ mod tests {
                 assert!(Severity::Info < threshold, "{fail_on:?} must exclude Info");
             }
         }
+    }
+
+    /// A color environment with explicit values, so the decision is tested
+    /// without reading or mutating the process environment.
+    fn environment_with(
+        is_terminal: bool,
+        no_color: Option<&str>,
+        clicolor: Option<&str>,
+    ) -> crate::report::ColorEnvironment {
+        crate::report::ColorEnvironment {
+            no_color: no_color.map(str::to_owned),
+            clicolor: clicolor.map(str::to_owned),
+            is_terminal,
+        }
+    }
+
+    #[test]
+    fn color_choice_never_and_always_ignore_the_environment() {
+        assert!(!crate::report::use_color(
+            crate::report::ColorChoice::Never,
+            &environment_with(true, None, None)
+        ));
+
+        // `Always` must survive an environment that would otherwise suppress
+        // color, since an explicit request overrides detection.
+        assert!(crate::report::use_color(
+            crate::report::ColorChoice::Always,
+            &environment_with(false, Some("1"), Some("0"))
+        ));
+    }
+
+    #[test]
+    fn auto_color_honors_no_color_and_clicolor() {
+        use crate::report::{ColorChoice, use_color};
+
+        assert!(!use_color(
+            ColorChoice::Auto,
+            &environment_with(true, Some("1"), None)
+        ));
+        assert!(use_color(
+            ColorChoice::Auto,
+            &environment_with(true, Some(""), None)
+        ));
+        assert!(!use_color(
+            ColorChoice::Auto,
+            &environment_with(true, None, Some("0"))
+        ));
+        assert!(use_color(
+            ColorChoice::Auto,
+            &environment_with(true, None, Some("1"))
+        ));
+        assert!(!use_color(
+            ColorChoice::Auto,
+            &environment_with(false, None, None)
+        ));
+    }
+
+    #[test]
+    fn render_width_stays_inside_the_clamp() {
+        let width = crate::report::render_width();
+
+        assert!(
+            (crate::report::MINIMUM_WIDTH..=crate::report::MAXIMUM_WIDTH).contains(&width),
+            "width {width} is outside the clamp"
+        );
     }
 }
