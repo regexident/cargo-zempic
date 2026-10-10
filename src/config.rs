@@ -347,6 +347,117 @@ impl Default for Gates {
     }
 }
 
+impl Gates {
+    /// Whether any `--only` selector explicitly requests `id`.
+    ///
+    /// A rule named by `--only` is read as an explicit request for it, so it is
+    /// exempt from every ignore and from the advisory gate.
+    pub fn is_explicitly_requested(&self, id: &crate::finding::RuleId) -> bool {
+        self.only.iter().any(|selector| selector.matches(id))
+    }
+}
+
+impl IgnoreRule {
+    /// Whether the ignore has expired as of `today`.
+    ///
+    /// An ignore expires only once `today` is strictly past its expiry, so an
+    /// ignore expiring today still suppresses through the whole day.
+    pub fn has_expired(&self, today: CivilDate) -> bool {
+        self.expires.is_some_and(|date| date < today)
+    }
+
+    /// Whether the ignore is scoped to `package`.
+    ///
+    /// Returns `true` when no package list is present, when the list contains
+    /// the wildcard `"*"`, or when `package` names one of the listed packages.
+    /// A finding about the workspace itself (`package` is [`None`]) is not
+    /// matched by a package-scoped ignore.
+    pub fn applies_to_package(&self, package: Option<&str>) -> bool {
+        match &self.packages {
+            None => true,
+            Some(list) => {
+                list.iter().any(|name| name == "*")
+                    || package.is_some_and(|name| list.iter().any(|listed| listed == name))
+            }
+        }
+    }
+}
+
+/// The findings a run reports and the notices its configuration raised.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Filtered {
+    /// The findings the gates retained.
+    pub findings: Vec<crate::finding::Finding>,
+    /// The configuration notices raised, in ignore order.
+    pub notices: Vec<crate::report::Notice>,
+}
+
+/// Apply the gates to `findings`, producing the retained findings and notices.
+///
+/// A finding matched by an `--only` selector is exempt from every ignore and
+/// from the advisory gate, because naming a rule is an explicit request for it.
+/// Notices are produced from the ignores alone, so an expired or undocumented
+/// ignore warns even in a run with nothing to suppress.
+pub fn filter(findings: Vec<crate::finding::Finding>, gates: &Gates, today: CivilDate) -> Filtered {
+    let mut notices = Vec::new();
+
+    for ignore in &gates.ignore {
+        if ignore.has_expired(today) {
+            notices.push(crate::report::Notice::ExpiredIgnore {
+                selector: ignore.text.clone(),
+                expired: ignore
+                    .expires
+                    .expect("an expired ignore carries an expiry")
+                    .as_iso8601(),
+            });
+        }
+
+        if !has_reason(ignore.reason.as_deref()) {
+            notices.push(crate::report::Notice::UndocumentedIgnore {
+                selector: ignore.text.clone(),
+            });
+        }
+    }
+
+    let retained = findings
+        .into_iter()
+        .filter(|finding| {
+            if gates.is_explicitly_requested(&finding.rule) {
+                return true;
+            }
+
+            if !gates.only.is_empty()
+                && !gates
+                    .only
+                    .iter()
+                    .any(|selector| selector.matches(&finding.rule))
+            {
+                return false;
+            }
+
+            if !gates.include_advisory && finding.is_advisory() {
+                return false;
+            }
+
+            !gates.ignore.iter().any(|ignore| {
+                !ignore.has_expired(today)
+                    && ignore.selector.matches(&finding.rule)
+                    && ignore.applies_to_package(finding.package.as_deref())
+            })
+        })
+        .collect();
+
+    Filtered {
+        findings: retained,
+        notices,
+    }
+}
+
+/// Whether a reason records anything beyond whitespace.
+fn has_reason(reason: Option<&str>) -> bool {
+    reason.is_some_and(|text| text.chars().any(|character| !character.is_whitespace()))
+}
+
 /// The private deserialization mirror of `zempic.toml`.
 ///
 /// Unknown keys are rejected, so a configuration carrying a section this crate
@@ -495,11 +606,14 @@ impl RawIgnore {
 
 #[cfg(test)]
 mod tests {
-    use super::{CivilDate, FileConfig, IgnoreRule};
+    use super::{CivilDate, FileConfig, Filtered, Gates, IgnoreRule, filter};
     use crate::ZempicError;
     use crate::dimension::Dimension;
-    use crate::finding::Selector;
-    use crate::report::{FailOn, Format};
+    use crate::finding::{
+        Confidence, Effort, Finding, Fixability, Magnitude, RuleId, RuntimeCost, Selector,
+        Severity, Tier,
+    };
+    use crate::report::{FailOn, Format, Notice};
     use camino::Utf8Path;
 
     /// The §6.2 schema with its knowledge-base block omitted.
@@ -750,5 +864,276 @@ expires = \"2026-12-31\"
             packages: None,
             expires: None,
         }
+    }
+
+    /// Build a finding from a rule, an optional package and a fixability.
+    fn finding(rule: &str, package: Option<&str>, fixability: Fixability) -> Finding {
+        Finding {
+            rule: RuleId::parse(rule).expect("the rule parses"),
+            package: package.map(str::to_owned),
+            tier: Tier::Foundational,
+            severity: Severity::High,
+            magnitude: Magnitude::Large,
+            confidence: Confidence::High,
+            effort: Effort::Trivial,
+            runtime_cost: RuntimeCost::None,
+            fixability,
+            location: None,
+            title: "t".to_owned(),
+            detail: "d".to_owned(),
+            tradeoff: "cost".to_owned(),
+            references: Vec::new(),
+        }
+    }
+
+    /// Build an ignore rule with an optional reason, package list and expiry.
+    fn ignore(
+        selector: &str,
+        reason: Option<&str>,
+        packages: Option<&[&str]>,
+        expires: Option<&str>,
+    ) -> IgnoreRule {
+        IgnoreRule {
+            selector: Selector::parse(selector).expect("the selector parses"),
+            text: selector.to_owned(),
+            reason: reason.map(str::to_owned),
+            packages: packages.map(|list| list.iter().map(|name| (*name).to_owned()).collect()),
+            expires: expires.map(|text| CivilDate::parse(text).expect("the date parses")),
+        }
+    }
+
+    /// The day every filtering case is evaluated against.
+    fn today() -> CivilDate {
+        CivilDate::parse("2026-10-04").unwrap()
+    }
+
+    /// The rule identifiers of the filtered findings, in output order.
+    fn retained(filtered: &Filtered) -> Vec<String> {
+        filtered
+            .findings
+            .iter()
+            .map(|finding| finding.rule.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn ignore_suppresses_a_matching_finding() {
+        let gates = Gates {
+            ignore: vec![ignore("profile/lto", Some("reason"), None, None)],
+            only: Vec::new(),
+            include_advisory: true,
+        };
+
+        let filtered = filter(
+            vec![
+                finding("profile/lto", None, Fixability::Safe),
+                finding("profile/strip", None, Fixability::Safe),
+            ],
+            &gates,
+            today(),
+        );
+
+        assert_eq!(retained(&filtered), ["profile/strip"]);
+        assert!(filtered.notices.is_empty());
+    }
+
+    #[test]
+    fn only_restricts_the_run_to_matching_rules() {
+        let gates = Gates {
+            ignore: Vec::new(),
+            only: vec![Selector::parse("profile").unwrap()],
+            include_advisory: true,
+        };
+
+        let filtered = filter(
+            vec![
+                finding("profile/lto", None, Fixability::Safe),
+                finding("deps/default-features", None, Fixability::Safe),
+            ],
+            &gates,
+            today(),
+        );
+
+        assert_eq!(retained(&filtered), ["profile/lto"]);
+    }
+
+    #[test]
+    fn only_exempts_a_rule_from_an_ignore() {
+        let gates = Gates {
+            ignore: vec![ignore("profile/lto", Some("reason"), None, None)],
+            only: vec![Selector::parse("profile/lto").unwrap()],
+            include_advisory: true,
+        };
+
+        let filtered = filter(
+            vec![finding("profile/lto", None, Fixability::Safe)],
+            &gates,
+            today(),
+        );
+
+        assert_eq!(retained(&filtered), ["profile/lto"]);
+    }
+
+    #[test]
+    fn only_exempts_a_rule_from_the_advisory_gate() {
+        let gates = Gates {
+            ignore: Vec::new(),
+            only: vec![Selector::parse("advisory/upx").unwrap()],
+            include_advisory: false,
+        };
+
+        let filtered = filter(
+            vec![finding("advisory/upx", None, Fixability::ReportOnly)],
+            &gates,
+            today(),
+        );
+
+        assert_eq!(retained(&filtered), ["advisory/upx"]);
+    }
+
+    #[test]
+    fn advisory_gate_drops_advisory_and_report_only_findings() {
+        let gates = Gates {
+            ignore: Vec::new(),
+            only: Vec::new(),
+            include_advisory: false,
+        };
+
+        let filtered = filter(
+            vec![
+                finding("advisory/upx", None, Fixability::ReportOnly),
+                finding("config/rustflags-shadowed", None, Fixability::ReportOnly),
+                finding("profile/strip", None, Fixability::Safe),
+            ],
+            &gates,
+            today(),
+        );
+
+        assert_eq!(retained(&filtered), ["profile/strip"]);
+    }
+
+    #[test]
+    fn package_scoped_ignore_applies_only_to_that_package() {
+        let gates = Gates {
+            ignore: vec![ignore(
+                "profile/lto",
+                Some("reason"),
+                Some(&["hot-path"]),
+                None,
+            )],
+            only: Vec::new(),
+            include_advisory: true,
+        };
+
+        let filtered = filter(
+            vec![
+                finding("profile/lto", None, Fixability::Safe),
+                finding("profile/lto", Some("other"), Fixability::Safe),
+                finding("profile/lto", Some("hot-path"), Fixability::Safe),
+            ],
+            &gates,
+            today(),
+        );
+
+        let packages: Vec<Option<String>> = filtered
+            .findings
+            .iter()
+            .map(|finding| finding.package.clone())
+            .collect();
+
+        assert_eq!(packages, [None, Some("other".to_owned())]);
+    }
+
+    #[test]
+    fn expired_ignore_stops_suppressing_and_warns() {
+        let gates = Gates {
+            ignore: vec![ignore(
+                "profile/lto",
+                Some("reason"),
+                None,
+                Some("2026-10-03"),
+            )],
+            only: Vec::new(),
+            include_advisory: true,
+        };
+
+        let filtered = filter(
+            vec![finding("profile/lto", None, Fixability::Safe)],
+            &gates,
+            today(),
+        );
+
+        assert_eq!(retained(&filtered), ["profile/lto"]);
+        assert_eq!(
+            filtered.notices,
+            vec![Notice::ExpiredIgnore {
+                selector: "profile/lto".to_owned(),
+                expired: "2026-10-03".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn ignore_expiring_today_still_suppresses() {
+        let gates = Gates {
+            ignore: vec![ignore(
+                "profile/lto",
+                Some("reason"),
+                None,
+                Some("2026-10-04"),
+            )],
+            only: Vec::new(),
+            include_advisory: true,
+        };
+
+        let filtered = filter(
+            vec![finding("profile/lto", None, Fixability::Safe)],
+            &gates,
+            today(),
+        );
+
+        assert!(filtered.findings.is_empty());
+        assert!(filtered.notices.is_empty());
+    }
+
+    #[test]
+    fn undocumented_ignore_produces_a_notice() {
+        let gates = Gates {
+            ignore: vec![ignore("profile/lto", None, None, None)],
+            only: Vec::new(),
+            include_advisory: true,
+        };
+
+        let filtered = filter(
+            vec![finding("profile/lto", None, Fixability::Safe)],
+            &gates,
+            today(),
+        );
+
+        assert!(filtered.findings.is_empty());
+        assert_eq!(
+            filtered.notices,
+            vec![Notice::UndocumentedIgnore {
+                selector: "profile/lto".to_owned(),
+            }]
+        );
+
+        let blank = Gates {
+            ignore: vec![ignore("profile/lto", Some("   "), None, None)],
+            only: Vec::new(),
+            include_advisory: true,
+        };
+        let filtered = filter(
+            vec![finding("profile/lto", None, Fixability::Safe)],
+            &blank,
+            today(),
+        );
+
+        assert_eq!(
+            filtered.notices,
+            vec![Notice::UndocumentedIgnore {
+                selector: "profile/lto".to_owned(),
+            }]
+        );
     }
 }
