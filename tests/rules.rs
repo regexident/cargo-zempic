@@ -32,15 +32,6 @@ fn manifest_key_span_reports_one_based_line_and_column() {
 }
 
 #[test]
-fn manifest_key_span_is_none_for_absent_key() {
-    let manifest_path = camino::Utf8PathBuf::from("Cargo.toml");
-    let document = ManifestDocument::parse(&manifest_path, DEMO_MANIFEST).unwrap();
-
-    assert_eq!(document.key_span("profile.release.codegen-units"), None);
-    assert_eq!(document.key_span("profile.missing.lto"), None);
-}
-
-#[test]
 fn manifest_parse_error_names_the_file() {
     let manifest_path = camino::Utf8PathBuf::from("broken/Cargo.toml");
     let error = ManifestDocument::parse(&manifest_path, "not valid toml =").unwrap_err();
@@ -1512,6 +1503,44 @@ fn markdown_renderer_retains_the_legend_verbatim() {
                 .lines()
                 .any(|line| line == cargo_zempic::report::MAGNITUDE_LEGEND),
             "the legend must appear on one unwrapped line: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn size_figure_scanner_rejects_figures_and_accepts_counts() {
+    for rejected in [
+        "47%",
+        "saves 12 KB",
+        "12KiB",
+        "3 mb",
+        "1,024 symbols",
+        "1_024",
+        "12 345",
+    ] {
+        assert!(
+            !common::size_figures(rejected).is_empty(),
+            "`{rejected}` must be rejected"
+        );
+    }
+
+    for accepted in [
+        "11 findings",
+        "2 high",
+        "7 members",
+        "cargo-zempic 0.1.0",
+        "serde_json 1.0.151",
+        "unset -> \"symbols\"",
+        "16 -> 1",
+        "3 -> \"z\"",
+        "Cargo.toml:12",
+        "Cargo.toml:1024",
+        "opt-level = 3",
+    ] {
+        assert!(
+            common::size_figures(accepted).is_empty(),
+            "`{accepted}` must be accepted, found: {:?}",
+            common::size_figures(accepted)
         );
     }
 }

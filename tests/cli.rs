@@ -170,28 +170,78 @@ fn unknown_package_exits_two() {
 #[test]
 fn output_contains_no_size_figure() {
     let workspace = common::Fixture::new("multi-member").materialize();
+    let manifest = workspace.manifest_path();
 
-    let output = binary()
-        .args([
-            "check",
-            "--manifest-path",
-            workspace.manifest_path().as_str(),
-        ])
-        .output()
-        .expect("the command runs");
+    // Every renderer's output is scanned: the human form, the JSON document and
+    // the Markdown document all carry the numbers policy.
+    for (label, args) in [
+        (
+            "human",
+            vec![
+                "check",
+                "--manifest-path",
+                manifest.as_str(),
+                "--format",
+                "human",
+                "--color",
+                "never",
+            ],
+        ),
+        (
+            "json",
+            vec![
+                "check",
+                "--manifest-path",
+                manifest.as_str(),
+                "--format",
+                "json",
+            ],
+        ),
+        (
+            "markdown",
+            vec![
+                "check",
+                "--manifest-path",
+                manifest.as_str(),
+                "--format",
+                "markdown",
+            ],
+        ),
+    ] {
+        let output = binary().args(&args).output().expect("the command runs");
 
-    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
-    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+        assert!(output.status.success(), "{label} run failed: {output:?}");
 
-    // The forbidden literals include a `%` and byte-unit suffixes so a numeric
-    // magnitude would fail the case even when phrased as a size.
-    for (name, text) in [("stdout", &stdout), ("stderr", &stderr)] {
-        for forbidden in ["%", "KB", "KiB", "MB", "MiB", "GB", "GiB", "bytes"] {
-            assert!(
-                !text.contains(forbidden),
-                "{name} must not contain `{forbidden}`: {text}"
-            );
+        let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+        let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+
+        common::assert_no_size_figures(&format!("{label} stdout"), &stdout);
+        common::assert_no_size_figures(&format!("{label} stderr"), &stderr);
+    }
+}
+
+#[test]
+fn rule_documentation_carries_no_size_figure() {
+    let docs = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("rules")
+        .join("docs");
+
+    // The directory appears with the first rule, so its absence is a pass.
+    let Ok(entries) = std::fs::read_dir(&docs) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
+            continue;
         }
+
+        let text = std::fs::read_to_string(&path).expect("the doc file is readable");
+
+        common::assert_no_size_figures(&path.display().to_string(), &text);
     }
 }
 

@@ -256,3 +256,136 @@ fn fixture_root() -> &'static Path {
         crate_root.join("tests").join("fixtures")
     })
 }
+
+/// Every size figure `text` carries, empty when it carries none.
+///
+/// The scan is a reject-list: it rejects any percent sign, any digit group
+/// followed by a byte-unit word, and any digit group carrying a thousands
+/// separator. It does not reject an integer adjacent to a counted noun, a
+/// version string, a profile setting value or a file location, because those
+/// are facts about the report rather than a measurement of the artifact.
+///
+/// Returning the occurrences rather than a boolean is what makes a failure
+/// diagnosable.
+pub fn size_figures(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut found = Vec::new();
+
+    for byte in bytes {
+        if *byte == b'%' {
+            found.push("%".to_owned());
+        }
+    }
+
+    // A digit run followed by optional whitespace and a byte-unit word.
+    for index in 0..bytes.len() {
+        if !bytes[index].is_ascii_digit() {
+            continue;
+        }
+
+        let mut end = index;
+
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+
+        let mut unit_start = end;
+
+        while unit_start < bytes.len() && (bytes[unit_start] == b' ' || bytes[unit_start] == b'\t')
+        {
+            unit_start += 1;
+        }
+
+        let mut unit_end = unit_start;
+
+        while unit_end < bytes.len() && bytes[unit_end].is_ascii_alphabetic() {
+            unit_end += 1;
+        }
+
+        if unit_end == unit_start {
+            continue;
+        }
+
+        let unit = text[unit_start..unit_end].to_ascii_lowercase();
+
+        if is_byte_unit(&unit) && !bytes.get(unit_end).is_some_and(u8::is_ascii_alphanumeric) {
+            found.push(text[index..unit_end].to_owned());
+        }
+    }
+
+    // A digit group carrying a thousands separator.
+    for index in 0..bytes.len() {
+        if !bytes[index].is_ascii_digit() {
+            continue;
+        }
+
+        let mut cursor = index;
+        let mut digits = 0;
+
+        while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+            digits += 1;
+            cursor += 1;
+        }
+
+        if digits == 0 || digits > 3 {
+            continue;
+        }
+
+        let mut group_end = cursor;
+        let mut separator_seen = false;
+
+        loop {
+            let separator = bytes.get(group_end).copied();
+
+            if !matches!(separator, Some(b',') | Some(b'_') | Some(b' ')) {
+                break;
+            }
+
+            // A space only separates a digit group when exactly three digits
+            // follow, so a space between words is not mistaken for one.
+            let mut group_digits = 0;
+
+            while group_end + 1 + group_digits < bytes.len()
+                && bytes[group_end + 1 + group_digits].is_ascii_digit()
+            {
+                group_digits += 1;
+            }
+
+            if group_digits != 3 {
+                break;
+            }
+
+            group_end += 1 + group_digits;
+            separator_seen = true;
+        }
+
+        if separator_seen {
+            found.push(text[index..group_end].to_owned());
+            continue;
+        }
+    }
+
+    found
+}
+
+/// Whether `unit` is one of the byte-unit words the scan rejects.
+fn is_byte_unit(unit: &str) -> bool {
+    matches!(
+        unit,
+        "bytes" | "kb" | "kib" | "mb" | "mib" | "gb" | "gib" | "tb" | "tib"
+    )
+}
+
+/// Panic naming `label` and every size figure `text` carries.
+///
+/// # Panics
+///
+/// Panics when [`size_figures`] returns any occurrence for `text`.
+pub fn assert_no_size_figures(label: &str, text: &str) {
+    let found = size_figures(text);
+
+    assert!(
+        found.is_empty(),
+        "{label} must carry no size figure, found: {found:?}\n{text}"
+    );
+}
