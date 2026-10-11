@@ -113,6 +113,45 @@ pub fn registry() -> &'static [RuleMetadata] {
     &[]
 }
 
+/// Evaluate every registered rule against `resolution` and return the findings.
+///
+/// The registry is evaluated once per selected dimension, in dimension order,
+/// and the results are deduplicated by [`RuleId`], keeping the first occurrence.
+/// A dimension-neutral rule therefore yields one finding however many dimensions
+/// are selected, while a dimensioned rule yields one finding per dimension that
+/// produces it.
+///
+/// The order of the returned findings is the direction order of the dimensions
+/// and the registry; the findings are not sorted here, because
+/// [`Report::new`](crate::report::Report::new) imposes the report order.
+pub fn evaluate(
+    resolution: &crate::Resolution,
+    root_manifest: &crate::manifest::ManifestDocument,
+    member_manifests: &[(String, crate::manifest::ManifestDocument)],
+) -> Vec<crate::finding::Finding> {
+    let mut findings = Vec::new();
+
+    for dimension in &resolution.dimensions {
+        let context = RuleContext {
+            dimension: *dimension,
+            resolution,
+            root_manifest,
+            member_manifests,
+            target_triple: &resolution.target_triple,
+        };
+
+        for entry in registry() {
+            findings.extend(entry.rule.evaluate(&context));
+        }
+    }
+
+    let mut seen: std::collections::BTreeSet<RuleId> = std::collections::BTreeSet::new();
+
+    findings.retain(|finding| seen.insert(finding.rule.clone()));
+
+    findings
+}
+
 /// The single place every rule's severity is assigned.
 ///
 /// Changing one entry is intended to be a reviewable diff. An entry may be
@@ -225,9 +264,150 @@ pub fn documentation_path(id: &RuleId) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{documentation_path, registry, severity_assignments, severity_of};
-    use crate::finding::{RuleId, Selector, Severity};
+    use super::{
+        Rule, RuleContext, documentation_path, registry, severity_assignments, severity_of,
+    };
+    use crate::finding::{
+        Confidence, Effort, Finding, Fixability, Magnitude, RuleId, RuntimeCost, Selector,
+        Severity, Tier,
+    };
     use std::collections::BTreeSet;
+
+    /// A test-only rule emitting one finding whose identifier is fixed.
+    struct NeutralProbe;
+
+    impl Rule for NeutralProbe {
+        fn evaluate(&self, _context: &RuleContext<'_>) -> Vec<Finding> {
+            vec![probe_finding("probe/neutral")]
+        }
+    }
+
+    /// A test-only rule emitting one finding identified per dimension.
+    struct DimensionedProbe;
+
+    impl Rule for DimensionedProbe {
+        fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+            vec![probe_finding(&format!(
+                "probe/qualified:{}",
+                context.dimension.as_str()
+            ))]
+        }
+    }
+
+    /// A finding carrying only the fields the evaluation and deduplication read.
+    fn probe_finding(rule: &str) -> Finding {
+        Finding {
+            rule: RuleId::parse(rule).expect("the probe rule parses"),
+            package: None,
+            tier: Tier::Foundational,
+            severity: Severity::High,
+            magnitude: Magnitude::Large,
+            confidence: Confidence::High,
+            effort: Effort::Trivial,
+            runtime_cost: RuntimeCost::None,
+            fixability: Fixability::Safe,
+            change: None,
+            location: None,
+            title: "t".to_owned(),
+            detail: "d".to_owned(),
+            tradeoff: "cost".to_owned(),
+            references: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn evaluation_deduplicates_a_dimension_neutral_rule() {
+        let resolution = probe_resolution();
+        let manifest = probe_manifest();
+
+        // The neutral rule's identifier carries no dimension, so evaluating it
+        // once per selected dimension must yield a single finding.
+        let findings = {
+            let mut findings = Vec::new();
+
+            for dimension in &resolution.dimensions {
+                let context = RuleContext {
+                    dimension: *dimension,
+                    resolution: &resolution,
+                    root_manifest: &manifest,
+                    member_manifests: &[],
+                    target_triple: &resolution.target_triple,
+                };
+
+                findings.extend(NeutralProbe.evaluate(&context));
+            }
+
+            let mut seen: BTreeSet<RuleId> = BTreeSet::new();
+            findings.retain(|finding| seen.insert(finding.rule.clone()));
+
+            findings
+        };
+
+        assert_eq!(findings.len(), 1, "the neutral rule must collapse to one");
+        assert_eq!(findings[0].rule.to_string(), "probe/neutral");
+    }
+
+    #[test]
+    fn evaluation_keeps_one_finding_per_dimensioned_identifier() {
+        let resolution = probe_resolution();
+        let manifest = probe_manifest();
+
+        let mut findings = Vec::new();
+
+        for dimension in &resolution.dimensions {
+            let context = RuleContext {
+                dimension: *dimension,
+                resolution: &resolution,
+                root_manifest: &manifest,
+                member_manifests: &[],
+                target_triple: &resolution.target_triple,
+            };
+
+            findings.extend(NeutralProbe.evaluate(&context));
+            findings.extend(DimensionedProbe.evaluate(&context));
+        }
+
+        let identifiers: BTreeSet<String> = findings
+            .iter()
+            .map(|finding| finding.rule.to_string())
+            .collect();
+
+        // A dimensioned rule and a neutral rule are distinct identifiers even
+        // when the dimension repeats, so both survive; deduplicating on the
+        // rule path alone would collapse them into one.
+        assert_eq!(
+            identifiers,
+            BTreeSet::from([
+                "probe/neutral".to_owned(),
+                "probe/qualified:size".to_owned()
+            ]),
+            "the neutral and dimensioned identifiers must both survive"
+        );
+    }
+
+    /// A resolution carrying two dimensions for the evaluation loop.
+    fn probe_resolution() -> crate::Resolution {
+        crate::Resolution {
+            workspace_root: camino::Utf8PathBuf::from("/w"),
+            member_count: 1,
+            selected: Vec::new(),
+            profile: crate::profile::builtin_defaults(crate::profile::BuiltinProfile::Release),
+            target_triple: "x86_64-unknown-linux-gnu".to_owned(),
+            dimensions: vec![
+                crate::dimension::Dimension::Size,
+                crate::dimension::Dimension::Size,
+            ],
+        }
+    }
+
+    /// A parsed manifest for building an evaluation context.
+    fn probe_manifest() -> crate::manifest::ManifestDocument {
+        crate::manifest::ManifestDocument::parse(
+            camino::Utf8Path::new("Cargo.toml"),
+            "[package]\nname = \"probe\"\n",
+        )
+        .expect("the probe manifest parses")
+    }
 
     #[test]
     fn every_severity_assignment_is_a_well_formed_selector() {

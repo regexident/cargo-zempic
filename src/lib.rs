@@ -305,6 +305,17 @@ pub struct Resolution {
 /// metadata` fails, the selection names an unknown member, or the workspace
 /// root manifest cannot be read or parsed.
 pub fn resolve(config: &AnalysisConfig) -> Result<Resolution> {
+    Ok(resolve_with_manifest(config)?.0)
+}
+
+/// Resolves the workspace and returns the root manifest alongside it.
+///
+/// [`resolve`] discards the manifest, while [`analyze`] evaluates the rule
+/// registry against it, so the document is loaded once and shared rather than
+/// read twice.
+fn resolve_with_manifest(
+    config: &AnalysisConfig,
+) -> Result<(Resolution, manifest::ManifestDocument)> {
     let target_triple = match &config.target {
         Some(target) => target.clone(),
         None => workspace::host_target_triple()?,
@@ -333,14 +344,17 @@ pub fn resolve(config: &AnalysisConfig) -> Result<Resolution> {
         config.dimensions.clone()
     };
 
-    Ok(Resolution {
-        workspace_root,
-        member_count,
-        selected,
-        profile,
-        target_triple,
-        dimensions,
-    })
+    Ok((
+        Resolution {
+            workspace_root,
+            member_count,
+            selected,
+            profile,
+            target_triple,
+            dimensions,
+        },
+        root_manifest,
+    ))
 }
 
 /// Analyzes the workspace an [`AnalysisConfig`] describes and returns a report.
@@ -358,7 +372,7 @@ pub fn resolve(config: &AnalysisConfig) -> Result<Resolution> {
 /// cannot be read or does not validate, or when a produced finding carries no
 /// tradeoff.
 pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
-    let resolution = resolve(config)?;
+    let (resolution, root_manifest) = resolve_with_manifest(config)?;
 
     let package_directories: Vec<camino::Utf8PathBuf> = resolution
         .selected
@@ -397,7 +411,7 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
         include_advisory: config.gates.include_advisory,
     };
 
-    let findings: Vec<finding::Finding> = Vec::new();
+    let findings = rules::evaluate(&resolution, &root_manifest, &[]);
     let filtered = config::filter(findings, &effective_gates, config.today);
 
     report::Report::new(

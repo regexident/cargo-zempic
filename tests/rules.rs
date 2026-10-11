@@ -771,6 +771,25 @@ fn config_discovery_merges_package_files_over_the_workspace_base() {
     assert_eq!(texts, ["profile/lto", "deps/default-features"]);
 }
 
+/// The analysis evaluates the rule registry against the resolved workspace.
+///
+/// `evaluate` runs each registry entry over the root manifest and the selected
+/// members; the registry is empty while no rule is registered, so this asserts
+/// the evaluation path returns a value rather than that it fires.
+#[test]
+fn analysis_of_a_workspace_evaluates_the_registry() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+    let config = analysis_config(&workspace);
+
+    let resolution = resolve(&config).expect("resolution succeeds");
+    let root_manifest =
+        ManifestDocument::load(&workspace.root().join("Cargo.toml")).expect("the root manifest");
+
+    let findings = cargo_zempic::rules::evaluate(&resolution, &root_manifest, &[]);
+
+    assert_eq!(findings.len(), 0, "an empty registry yields nothing");
+}
+
 /// `analyze` returns a report over a real workspace, carrying the resolution it
 /// ran against and no findings.
 #[test]
