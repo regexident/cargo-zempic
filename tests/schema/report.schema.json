@@ -1,0 +1,37 @@
+{
+  "document": [
+    "schema_version",
+    "zempic_version",
+    "workspace_root",
+    "profile",
+    "dimensions",
+    "findings",
+    "conflicts",
+    "summary",
+    "legend"
+  ],
+  "finding": [
+    "rule",
+    "dimension",
+    "package",
+    "tier",
+    "severity",
+    "magnitude",
+    "confidence",
+    "effort",
+    "runtime_cost",
+    "fixability",
+    "change",
+    "location",
+    "title",
+    "detail",
+    "tradeoff",
+    "references"
+  ],
+  "summary": [
+    "total",
+    "fixable",
+    "by_severity",
+    "by_magnitude"
+  ]
+}
