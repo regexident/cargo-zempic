@@ -489,7 +489,8 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
         manifest::ManifestDocument::load(&workspace_scope.workspace_root.join("Cargo.toml"))?;
     let resolution = finish(workspace_scope, &profile_name, dimensions, &root_manifest)?;
 
-    let findings = rules::evaluate(&resolution, &root_manifest, &[]);
+    let member_manifests = member_manifests(&resolution)?;
+    let findings = rules::evaluate(&resolution, &root_manifest, &member_manifests);
     let filtered = config::filter(findings, &effective_gates, config.today);
 
     report::Report::new(
@@ -499,6 +500,39 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
         filtered.notices,
         settings,
     )
+}
+
+/// Parses each selected member's manifest, excluding the workspace root's.
+///
+/// A member whose manifest path is the workspace root's `Cargo.toml` is the root
+/// package of a non-virtual workspace, and its `[profile.*]` table is the one
+/// cargo honors, so including it would invert the meaning of the rule that reads
+/// this list. An unreadable or unparseable member manifest fails the analysis
+/// the same way the root's does.
+///
+/// # Errors
+///
+/// Returns [`ZempicError::ManifestRead`](crate::ZempicError::ManifestRead) or
+/// [`ZempicError::ManifestParse`](crate::ZempicError::ManifestParse) naming a
+/// member manifest that cannot be read or parsed.
+pub fn member_manifests(
+    resolution: &Resolution,
+) -> Result<Vec<(String, manifest::ManifestDocument)>> {
+    let root_manifest_path = resolution.workspace_root.join("Cargo.toml");
+    let mut manifests = Vec::new();
+
+    for package in &resolution.selected {
+        if package.manifest_path == root_manifest_path {
+            continue;
+        }
+
+        manifests.push((
+            package.name.clone(),
+            manifest::ManifestDocument::load(&package.manifest_path)?,
+        ));
+    }
+
+    Ok(manifests)
 }
 
 /// Builds the [`workspace::MetadataQuery`] a configuration resolves through.

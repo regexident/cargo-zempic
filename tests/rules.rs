@@ -790,6 +790,50 @@ fn analysis_of_a_workspace_evaluates_the_registry() {
     assert_eq!(findings.len(), 0, "an empty registry yields nothing");
 }
 
+/// The member manifests a rule reads exclude the workspace root's own.
+#[test]
+fn member_manifests_exclude_the_workspace_root() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+    let config = analysis_config(&workspace);
+
+    let resolution = resolve(&config).expect("resolution succeeds");
+    let manifests = cargo_zempic::member_manifests(&resolution).expect("the members parse");
+
+    let names: Vec<&str> = manifests.iter().map(|(name, _)| name.as_str()).collect();
+
+    assert_eq!(names, ["alpha", "beta"]);
+
+    let root_manifest_path = resolution.workspace_root.join("Cargo.toml");
+
+    for (_, document) in &manifests {
+        assert_ne!(
+            document.path(),
+            root_manifest_path.as_path(),
+            "the root package's own manifest must be excluded"
+        );
+    }
+}
+
+/// A member manifest that cannot be parsed fails the analysis.
+#[test]
+fn an_unparseable_member_manifest_fails_the_analysis() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    std::fs::write(
+        workspace.root().join("alpha/Cargo.toml"),
+        "not valid toml =",
+    )
+    .unwrap();
+
+    let error = cargo_zempic::analyze(&analyze_config(&workspace, &[]))
+        .expect_err("an unparseable member manifest fails the analysis");
+
+    assert!(
+        error.to_string().contains("Cargo.toml"),
+        "the error must name the offending manifest: {error}"
+    );
+}
+
 /// `analyze` returns a report over a real workspace, carrying the resolution it
 /// ran against and no findings.
 #[test]
