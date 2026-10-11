@@ -237,7 +237,7 @@ pub struct AnalysisConfig {
     /// The profile whose settings govern the analyzed artifacts, or [`None`]
     /// when neither the command line nor a configuration file names one and
     /// [`DEFAULT_PROFILE`] applies.
-    pub profile: String,
+    pub profile: Option<String>,
     /// The features active during resolution.
     pub features: workspace::FeatureSelection,
     /// The target triple to resolve for, or the host's when unset.
@@ -336,7 +336,7 @@ pub fn resolve(config: &AnalysisConfig) -> Result<Resolution> {
 
     finish(
         scope,
-        &config.profile,
+        config.profile.as_deref().unwrap_or(DEFAULT_PROFILE),
         config.dimensions.clone(),
         &root_manifest,
     )
@@ -444,7 +444,12 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
 
     let file_config = config::discover(&workspace_scope.workspace_root, &package_directories)?;
 
-    let profile_name = config.profile.clone();
+    let profile_name = config
+        .profile
+        .as_deref()
+        .or(file_config.analysis.profile.as_deref())
+        .unwrap_or(DEFAULT_PROFILE)
+        .to_owned();
 
     let dimensions = if config.dimensions.is_empty() {
         file_config
@@ -524,7 +529,7 @@ mod tests {
             dimensions: vec![Dimension::Size],
             manifest_path: Some(camino::Utf8PathBuf::from("/probe/Cargo.toml")),
             selection: workspace::PackageSelection::default(),
-            profile: "release".to_owned(),
+            profile: None,
             features: workspace::FeatureSelection::default(),
             target: Some("aarch64-unknown-linux-gnu".to_owned()),
             format: None,

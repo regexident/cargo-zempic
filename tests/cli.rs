@@ -478,3 +478,70 @@ fn fail_on_never_is_the_default() {
         .assert()
         .code(0);
 }
+
+#[test]
+fn configured_profile_is_honored_and_overridden_by_the_argument() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    // A declared non-built-in profile must carry `inherits`, so the fixture
+    // gains a table the base fixture lacks by writing into the materialized
+    // workspace rather than checking in another directory.
+    let root_manifest = concat!(
+        "[workspace]\n",
+        "members = [\"alpha\", \"beta\"]\n\n",
+        "[profile.custom]\n",
+        "inherits = \"release\"\n",
+    );
+    std::fs::write(workspace.root().join("Cargo.toml"), root_manifest).unwrap();
+    std::fs::write(
+        workspace.root().join("zempic.toml"),
+        "schema_version = 1\n\n[analysis]\nprofile = \"custom\"\n",
+    )
+    .unwrap();
+
+    // A bare run analyzes the configured profile, which only reaches the
+    // resolution if `--profile` carries no default.
+    binary()
+        .args([
+            "check",
+            "--manifest-path",
+            workspace.manifest_path().as_str(),
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("profile: custom"));
+
+    // The argument merges over the configured profile.
+    binary()
+        .args([
+            "check",
+            "--manifest-path",
+            workspace.manifest_path().as_str(),
+            "--profile",
+            "release",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("profile: release"));
+}
+
+#[test]
+fn configured_dimensions_are_honored() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    std::fs::write(
+        workspace.root().join("zempic.toml"),
+        "schema_version = 1\n\n[analysis]\noptimize_for = [\"size\"]\n",
+    )
+    .unwrap();
+
+    binary()
+        .args([
+            "check",
+            "--manifest-path",
+            workspace.manifest_path().as_str(),
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("optimizing for: size"));
+}

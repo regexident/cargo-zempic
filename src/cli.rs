@@ -136,8 +136,8 @@ pub struct AnalysisArgs {
     pub exclude: Vec<String>,
 
     /// The cargo profile whose settings govern the analyzed artifacts.
-    #[arg(long = "profile", value_name = "NAME", default_value = "release")]
-    pub profile: String,
+    #[arg(long = "profile", value_name = "NAME")]
+    pub profile: Option<String>,
 
     /// Features to activate during resolution.
     #[arg(
@@ -333,7 +333,19 @@ mod tests {
     fn profile_defaults_to_release() {
         let args = Args::try_parse_from(["cargo-zempic", "check"]).expect("the default parses");
 
-        assert_eq!(analysis(&args).profile, "release");
+        assert_eq!(analysis(&args).profile, None);
+    }
+
+    #[test]
+    fn profile_argument_is_absent_when_not_given() {
+        let absent = Args::try_parse_from(["cargo-zempic", "check"]).expect("a plain check parses");
+        let present = Args::try_parse_from(["cargo-zempic", "check", "--profile", "custom"])
+            .expect("an explicit profile parses");
+
+        // No clap default may supply a profile: a default is indistinguishable
+        // from a user selection and would silently defeat `[analysis] profile`.
+        assert_eq!(analysis(&absent).profile, None);
+        assert_eq!(analysis(&present).profile, Some("custom".to_owned()));
     }
 
     #[test]
@@ -393,7 +405,7 @@ mod tests {
                     workspace: true,
                     exclude: vec!["beta".to_owned()],
                 },
-                profile: "custom".to_owned(),
+                profile: Some("custom".to_owned()),
                 features: workspace::FeatureSelection {
                     features: vec!["one".to_owned(), "two".to_owned()],
                     all_features: true,

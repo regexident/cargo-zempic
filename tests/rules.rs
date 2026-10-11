@@ -423,7 +423,7 @@ fn analysis_config(workspace: &common::MaterializedWorkspace) -> AnalysisConfig 
         dimensions: Vec::new(),
         manifest_path: Some(workspace.manifest_path()),
         selection: PackageSelection::default(),
-        profile: "release".to_owned(),
+        profile: None,
         features: FeatureSelection::default(),
         target: None,
         format: None,
@@ -440,7 +440,7 @@ fn analyze_config(workspace: &common::MaterializedWorkspace, only: &[&str]) -> A
         dimensions: vec![Dimension::Size],
         manifest_path: Some(workspace.manifest_path()),
         selection: PackageSelection::default(),
-        profile: "release".to_owned(),
+        profile: None,
         features: FeatureSelection::default(),
         target: None,
         format: None,
@@ -630,7 +630,7 @@ fn resolution_defaults_to_the_size_dimension() {
 fn resolution_defaults_to_the_release_profile_when_requested() {
     let workspace = common::Fixture::new("multi-member").materialize();
     let mut config = analysis_config(&workspace);
-    config.profile = "release".to_owned();
+    config.profile = Some("release".to_owned());
 
     let resolution = resolve(&config).expect("resolution succeeds");
 
