@@ -1,14 +1,54 @@
 //! The rule registry and the single table that assigns every rule its severity.
 
+pub mod profile;
+
 use crate::finding::{RuleId, Selector, Severity};
 
-/// The metadata every rule registers: what it is, not what it found.
+/// The inputs a rule reads when it evaluates a workspace.
+///
+/// A rule receives the dimension it answers, the resolved workspace, the
+/// workspace root manifest and the selected members' parsed manifests. The root
+/// manifest is kept separate from the member manifests because cargo honors a
+/// `[profile.*]` table only in the root, so a rule that cares about that
+/// distinction can tell the two apart.
+pub struct RuleContext<'a> {
+    /// The optimization objective the evaluation answers.
+    pub dimension: crate::dimension::Dimension,
+    /// The workspace resolved for the run.
+    pub resolution: &'a crate::Resolution,
+    /// The parsed workspace root manifest.
+    pub root_manifest: &'a crate::manifest::ManifestDocument,
+    /// The parsed manifests of the selected members, excluding the root
+    /// package's own manifest, paired with each member's name in selection
+    /// order.
+    pub member_manifests: &'a [(String, crate::manifest::ManifestDocument)],
+    /// The target triple the resolution runs for.
+    pub target_triple: &'a str,
+}
+
+/// A rule's behavior: the findings one evaluation produces for a workspace.
+///
+/// A rule carries no state beyond its identity, so every instance is a unit
+/// struct with a `const`. [`RuleMetadata::rule`] holds the instance, and the
+/// registry's totality test enumerates it together with the metadata so a rule
+/// cannot be documented without being evaluated.
+///
+/// The trait requires [`Sync`] because [`registry`] is a `const` slice of
+/// [`RuleMetadata`] and a `const` demands it.
+pub trait Rule: Sync {
+    /// Evaluate the rule against `context`, producing zero or more findings.
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<crate::finding::Finding>;
+}
+
+/// The metadata every rule registers: what it is and how to run it.
 ///
 /// The struct carries no severity field. Severity is assigned in exactly one
 /// place, [`severity_assignments`], so a rule's severity cannot drift from the
 /// table the whole project is reviewed against.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub struct RuleMetadata {
+    /// The rule's behavior, evaluated once per selected dimension.
+    pub rule: &'static dyn Rule,
     /// The rule's canonical identifier.
     pub id: &'static str,
     /// The report section the rule's findings belong to.
@@ -22,6 +62,31 @@ pub struct RuleMetadata {
     /// The rule's documentation, embedded from its doc file.
     pub documentation: &'static str,
 }
+
+impl std::fmt::Debug for RuleMetadata {
+    /// Format the metadata without the behavior, which is not printable.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RuleMetadata")
+            .field("id", &self.id)
+            .field("tier", &self.tier)
+            .field("magnitude", &self.magnitude)
+            .field("fixability", &self.fixability)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for RuleMetadata {
+    /// Two entries are equal when they name the same rule.
+    ///
+    /// An identifier uniquely names a registry entry, so comparing it alone is
+    /// the whole of a rule's identity.
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for RuleMetadata {}
 
 impl RuleMetadata {
     /// The rule's identifier, parsed.
