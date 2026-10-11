@@ -309,6 +309,19 @@ fn release_defaults() -> ResolvedProfile {
     }
 }
 
+/// The settings one `[profile.<name>.package.<key>]` override carries.
+///
+/// Cargo permits only a subset of profile settings in a per-package override,
+/// and of those this crate reads only `opt-level`, which is the one the
+/// `profile/dependency-opt-level` rule consults. The struct therefore carries
+/// only that setting; a later reader must not mistake the omission for an
+/// oversight.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackageOverride {
+    /// Value of `opt-level`, when the override sets it.
+    pub opt_level: Option<(OptLevel, crate::manifest::KeySpan)>,
+}
+
 /// The settings written in one `[profile.<name>]` table of a manifest.
 ///
 /// Each setting is present only when the table sets it. The accompanying
@@ -340,6 +353,30 @@ pub struct ProfileTable {
     pub overflow_checks: Option<(bool, crate::manifest::KeySpan)>,
     /// Value of `split-debuginfo`.
     pub split_debuginfo: Option<(SplitDebuginfo, crate::manifest::KeySpan)>,
+    /// The profile's per-package overrides, keyed by package name, with the
+    /// glob form keyed by the literal `*`.
+    pub package_overrides: std::collections::BTreeMap<String, PackageOverride>,
+}
+
+impl ProfileTable {
+    /// The glob per-package override, `[profile.<name>.package."*"]`, if any.
+    ///
+    /// The glob override applies to every dependency; a named override applies
+    /// to one package and is reached through
+    /// [`package_overrides`](Self::package_overrides).
+    pub fn glob_package_override(&self) -> Option<&PackageOverride> {
+        self.package_overrides.get("*")
+    }
+}
+
+/// The table `name` resolves to, when the manifest declares one.
+///
+/// A built-in profile with no table of its own yields [`None`].
+pub fn profile_table_for<'a>(
+    tables: &'a std::collections::BTreeMap<String, ProfileTable>,
+    name: &str,
+) -> Option<&'a ProfileTable> {
+    tables.get(name)
 }
 
 /// Reads every immediate `[profile.<name>]` table from `manifest`.
@@ -639,7 +676,45 @@ fn read_profile_table(
             "split-debuginfo",
             parse_split_debuginfo,
         )?,
+        package_overrides: read_package_overrides(table, ctx)?,
     })
+}
+
+/// Reads every `[profile.<name>.package.<key>]` override from `table`.
+///
+/// Each override is parsed into a [`PackageOverride`]. The glob form is keyed by
+/// the literal `*` and a named form by its package name. An override carrying no
+/// setting this crate reads parses with no `opt-level` rather than erroring, so
+/// a valid manifest never fails the analysis; only an unparseable `opt-level`
+/// value is an error, through the same path a top-level one takes.
+fn read_package_overrides(
+    table: &toml_edit::Table,
+    ctx: &SettingContext<'_>,
+) -> crate::Result<std::collections::BTreeMap<String, PackageOverride>> {
+    let mut overrides = std::collections::BTreeMap::new();
+
+    let Some(package) = table.get("package").and_then(toml_edit::Item::as_table) else {
+        return Ok(overrides);
+    };
+
+    for (key, entry) in package.iter() {
+        let override_table = entry.as_table().expect("a package override is a table");
+        let setting = format!("package.{key}.opt-level");
+
+        overrides.insert(
+            key.to_owned(),
+            PackageOverride {
+                opt_level: read_setting(
+                    override_table.get("opt-level"),
+                    ctx,
+                    &setting,
+                    parse_opt_level,
+                )?,
+            },
+        );
+    }
+
+    Ok(overrides)
 }
 
 /// Reports whether `name` is a profile name cargo accepts, that is, one whose
@@ -994,6 +1069,50 @@ mod tests {
             resolved.split_debuginfo.provenance,
             Provenance::Explicit { ref profile, .. } if profile == "release"
         ));
+    }
+
+    #[test]
+    fn glob_package_override_carries_its_opt_level() {
+        let document = manifest("[profile.release.package.\"*\"]\nopt-level = \"z\"\n");
+
+        let tables = profile_tables(&document).unwrap();
+        let override_entry = tables["release"]
+            .glob_package_override()
+            .expect("the glob override is present");
+        let (value, span) = override_entry.opt_level.as_ref().unwrap();
+
+        assert_eq!(*value, OptLevel::SizeNoVectorize);
+        assert_eq!(span.key, "profile.release.package.*.opt-level");
+    }
+
+    #[test]
+    fn named_package_override_is_not_the_glob_override() {
+        let document = manifest("[profile.release.package.serde]\nopt-level = 3\n");
+
+        let tables = profile_tables(&document).unwrap();
+        let table = &tables["release"];
+
+        assert!(table.package_overrides.contains_key("serde"));
+        assert!(
+            table.package_overrides["serde"].opt_level.is_some(),
+            "the named override carries its opt-level"
+        );
+        assert!(
+            table.glob_package_override().is_none(),
+            "a named override must not satisfy the glob accessor"
+        );
+    }
+
+    #[test]
+    fn package_override_without_opt_level_parses() {
+        let document = manifest("[profile.release.package.\"*\"]\ndebug = true\n");
+
+        let tables = profile_tables(&document).unwrap();
+        let override_entry = tables["release"]
+            .glob_package_override()
+            .expect("the glob override is present");
+
+        assert!(override_entry.opt_level.is_none());
     }
 
     #[test]
