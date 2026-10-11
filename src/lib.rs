@@ -234,7 +234,9 @@ pub struct AnalysisConfig {
     pub manifest_path: Option<camino::Utf8PathBuf>,
     /// The workspace members to analyze.
     pub selection: workspace::PackageSelection,
-    /// The profile whose settings govern the analyzed artifacts.
+    /// The profile whose settings govern the analyzed artifacts, or [`None`]
+    /// when neither the command line nor a configuration file names one and
+    /// [`DEFAULT_PROFILE`] applies.
     pub profile: String,
     /// The features active during resolution.
     pub features: workspace::FeatureSelection,
@@ -288,6 +290,28 @@ pub struct Resolution {
     pub dimensions: Vec<dimension::Dimension>,
 }
 
+/// The profile a run analyzes when neither the command line nor a configuration
+/// file names one.
+pub const DEFAULT_PROFILE: &str = "release";
+
+/// The workspace scoped before a profile is resolved.
+///
+/// Scoping reads `cargo metadata` and selects packages, which requires no
+/// configuration; resolving a profile additionally requires the effective
+/// profile name, which the configuration can supply. The two are separated so
+/// that [`analyze`] can read the configuration between them without loading
+/// metadata twice.
+struct WorkspaceScope {
+    /// The root directory of the analyzed workspace.
+    workspace_root: camino::Utf8PathBuf,
+    /// The number of packages the workspace contains, selected or not.
+    member_count: usize,
+    /// The selected packages, in the order the selection returned them.
+    selected: Vec<ResolvedPackage>,
+    /// The target triple resolution runs for.
+    target_triple: String,
+}
+
 /// Resolves the workspace an [`AnalysisConfig`] describes into the packages,
 /// profile and target an analysis runs against.
 ///
@@ -296,8 +320,10 @@ pub struct Resolution {
 /// and never consulted. The workspace is read through `cargo metadata`, whose
 /// package graph supplies both the selected packages and the member count.
 ///
-/// This is the workspace resolution an analysis runs against; [`analyze`] is
-/// the entry point that also reads configuration and produces a report.
+/// This entry point honors the arguments alone; the profile is
+/// [`DEFAULT_PROFILE`] when the configuration names none. [`analyze`] is the
+/// entry point that also reads `zempic.toml` and lets it select the profile and
+/// dimensions.
 ///
 /// # Errors
 ///
@@ -305,17 +331,23 @@ pub struct Resolution {
 /// metadata` fails, the selection names an unknown member, or the workspace
 /// root manifest cannot be read or parsed.
 pub fn resolve(config: &AnalysisConfig) -> Result<Resolution> {
-    Ok(resolve_with_manifest(config)?.0)
+    let scope = scope(config)?;
+    let root_manifest = manifest::ManifestDocument::load(&scope.workspace_root.join("Cargo.toml"))?;
+
+    finish(
+        scope,
+        &config.profile,
+        config.dimensions.clone(),
+        &root_manifest,
+    )
 }
 
-/// Resolves the workspace and returns the root manifest alongside it.
+/// Reads the workspace's packages and target triple.
 ///
-/// [`resolve`] discards the manifest, while [`analyze`] evaluates the rule
-/// registry against it, so the document is loaded once and shared rather than
-/// read twice.
-fn resolve_with_manifest(
-    config: &AnalysisConfig,
-) -> Result<(Resolution, manifest::ManifestDocument)> {
+/// Performs the host-triple resolution, metadata load and package selection
+/// that precede profile resolution, so a caller may read the configuration
+/// before naming the profile.
+fn scope(config: &AnalysisConfig) -> Result<WorkspaceScope> {
     let target_triple = match &config.target {
         Some(target) => target.clone(),
         None => workspace::host_target_triple()?,
@@ -335,26 +367,47 @@ fn resolve_with_manifest(
         })
         .collect();
 
-    let root_manifest = manifest::ManifestDocument::load(&workspace_root.join("Cargo.toml"))?;
-    let profile = profile::resolve_profile(&root_manifest, &config.profile)?;
+    Ok(WorkspaceScope {
+        workspace_root,
+        member_count,
+        selected,
+        target_triple,
+    })
+}
 
-    let dimensions = if config.dimensions.is_empty() {
-        vec![dimension::Dimension::Size]
-    } else {
-        config.dimensions.clone()
-    };
+/// Resolves `profile_name` over `root_manifest` into a [`Resolution`].
+///
+/// The dimensions default to [`dimension::Dimension::Size`] when `dimensions`
+/// is empty and are deduplicated while preserving the given order otherwise.
+fn finish(
+    scope: WorkspaceScope,
+    profile_name: &str,
+    dimensions: Vec<dimension::Dimension>,
+    root_manifest: &manifest::ManifestDocument,
+) -> Result<Resolution> {
+    let profile = profile::resolve_profile(root_manifest, profile_name)?;
 
-    Ok((
-        Resolution {
-            workspace_root,
-            member_count,
-            selected,
-            profile,
-            target_triple,
-            dimensions,
-        },
-        root_manifest,
-    ))
+    let mut seen = std::collections::BTreeSet::new();
+    let mut effective = Vec::new();
+
+    for dimension in dimensions {
+        if seen.insert(dimension) {
+            effective.push(dimension);
+        }
+    }
+
+    if effective.is_empty() {
+        effective.push(dimension::Dimension::Size);
+    }
+
+    Ok(Resolution {
+        workspace_root: scope.workspace_root,
+        member_count: scope.member_count,
+        selected: scope.selected,
+        profile,
+        target_triple: scope.target_triple,
+        dimensions: effective,
+    })
 }
 
 /// Analyzes the workspace an [`AnalysisConfig`] describes and returns a report.
@@ -366,15 +419,19 @@ fn resolve_with_manifest(
 /// describes them, so the analysis is read-only and completes without a
 /// compiler.
 ///
+/// The analyzed profile is the command line's, else the configuration's, else
+/// [`DEFAULT_PROFILE`]; the dimensions are the command line's when non-empty,
+/// else the configuration's, else [`dimension::Dimension::Size`].
+///
 /// # Errors
 ///
 /// Returns a [`ZempicError`] when resolution fails, when a configuration file
 /// cannot be read or does not validate, or when a produced finding carries no
 /// tradeoff.
 pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
-    let (resolution, root_manifest) = resolve_with_manifest(config)?;
+    let workspace_scope = scope(config)?;
 
-    let package_directories: Vec<camino::Utf8PathBuf> = resolution
+    let package_directories: Vec<camino::Utf8PathBuf> = workspace_scope
         .selected
         .iter()
         .filter_map(|package| {
@@ -385,7 +442,19 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
         })
         .collect();
 
-    let file_config = config::discover(&resolution.workspace_root, &package_directories)?;
+    let file_config = config::discover(&workspace_scope.workspace_root, &package_directories)?;
+
+    let profile_name = config.profile.clone();
+
+    let dimensions = if config.dimensions.is_empty() {
+        file_config
+            .analysis
+            .optimize_for
+            .clone()
+            .unwrap_or_else(|| vec![dimension::Dimension::Size])
+    } else {
+        config.dimensions.clone()
+    };
 
     // The configured format and threshold are the base the command line merges
     // over; `None` from the command line means the file, or the default, wins.
@@ -410,6 +479,10 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
         only: config.gates.only.clone(),
         include_advisory: config.gates.include_advisory,
     };
+
+    let root_manifest =
+        manifest::ManifestDocument::load(&workspace_scope.workspace_root.join("Cargo.toml"))?;
+    let resolution = finish(workspace_scope, &profile_name, dimensions, &root_manifest)?;
 
     let findings = rules::evaluate(&resolution, &root_manifest, &[]);
     let filtered = config::filter(findings, &effective_gates, config.today);
