@@ -1420,3 +1420,98 @@ fn json_document_omits_the_knowledge_base_version() {
     assert_eq!(parsed["summary"]["by_severity"]["info"], 0);
     assert_eq!(parsed["summary"]["by_magnitude"]["none"], 0);
 }
+
+/// A report with three findings over two tiers, one carrying a detail with a
+/// pipe and a tradeoff with a newline.
+fn markdown_report() -> cargo_zempic::report::Report {
+    use cargo_zempic::finding::{Magnitude, Severity, Tier};
+
+    let mut piped = finding(
+        "profile/strip",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Large,
+        None,
+    );
+    piped.detail = "a | b".to_owned();
+    piped.tradeoff = "line one\nline two".to_owned();
+
+    report_of(vec![
+        piped,
+        finding(
+            "profile/debug-info",
+            Tier::Foundational,
+            Severity::High,
+            Magnitude::Moderate,
+            None,
+        ),
+        finding(
+            "deps/duplicate-versions",
+            Tier::Dependencies,
+            Severity::Medium,
+            Magnitude::Moderate,
+            None,
+        ),
+    ])
+}
+
+/// The number of cells a Markdown table row carries, counting unescaped pipes.
+fn unescaped_cell_count(line: &str) -> usize {
+    line.replace("\\|", "\u{0}").split('|').count()
+}
+
+#[test]
+fn markdown_renderer_emits_a_table_per_non_empty_tier() {
+    let report = markdown_report();
+
+    let rendered = cargo_zempic::report::markdown::render(&report);
+
+    assert!(rendered.contains("## Tier 1: Foundational"), "{rendered}");
+    assert!(rendered.contains("## Tier 4: Dependencies"), "{rendered}");
+    assert!(!rendered.contains("## Tier 2"), "{rendered}");
+
+    let table_lines: Vec<&str> = rendered
+        .lines()
+        .filter(|line| line.starts_with("| "))
+        .collect();
+
+    // Each tier contributes a header row, a separator row and its rows; all
+    // must agree on the column count.
+    let expected = unescaped_cell_count(table_lines[0]);
+
+    for line in &table_lines {
+        assert_eq!(
+            unescaped_cell_count(line),
+            expected,
+            "a row disagrees on column count: {line}"
+        );
+    }
+}
+
+#[test]
+fn markdown_renderer_escapes_pipes_and_newlines_in_cells() {
+    let report = markdown_report();
+
+    let rendered = cargo_zempic::report::markdown::render(&report);
+
+    assert!(rendered.contains("a \\| b"), "{rendered}");
+    assert!(rendered.contains("line one line two"), "{rendered}");
+    assert!(!rendered.contains("a | b"), "{rendered}");
+}
+
+#[test]
+fn markdown_renderer_retains_the_legend_verbatim() {
+    let populated = markdown_report();
+    let empty = report_of(Vec::new());
+
+    for report in [&populated, &empty] {
+        let rendered = cargo_zempic::report::markdown::render(report);
+
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line == cargo_zempic::report::MAGNITUDE_LEGEND),
+            "the legend must appear on one unwrapped line: {rendered}"
+        );
+    }
+}

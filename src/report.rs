@@ -4,6 +4,7 @@ use crate::finding::{Finding, Magnitude, Severity, Tier};
 
 pub mod human;
 pub mod json;
+pub mod markdown;
 
 /// The statement every renderer carries about what a magnitude is.
 ///
