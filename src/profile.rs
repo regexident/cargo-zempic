@@ -74,6 +74,53 @@ pub enum DebugInfo {
     Full,
 }
 
+/// How much debug information cargo emits in a separate file.
+///
+/// The setting decides whether debug information is left inside the linked
+/// artifact, which is what makes it relevant to artifact size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitDebuginfo {
+    /// Debug information stays in the artifact (`"off"`).
+    Off,
+    /// Debug information is emitted into a separate directory of files
+    /// (`"packed"`).
+    Packed,
+    /// Debug information is emitted into a separate file per object
+    /// (`"unpacked"`).
+    Unpacked,
+}
+
+impl SplitDebuginfo {
+    /// The name this variant is spelled under in a manifest.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SplitDebuginfo::Off => "off",
+            SplitDebuginfo::Packed => "packed",
+            SplitDebuginfo::Unpacked => "unpacked",
+        }
+    }
+
+    /// The variant a manifest value names, or [`None`] for any other value.
+    pub fn from_toml_value(value: &toml_edit::Value) -> Option<Self> {
+        match value.as_str()? {
+            "off" => Some(SplitDebuginfo::Off),
+            "packed" => Some(SplitDebuginfo::Packed),
+            "unpacked" => Some(SplitDebuginfo::Unpacked),
+            _ => None,
+        }
+    }
+}
+
+/// Whether `triple` targets an Apple platform.
+///
+/// An Apple triple carries `apple` as its vendor field, the second of the
+/// `-`-separated fields; comparing that field rather than searching the whole
+/// string keeps a path or crate name containing `apple` from producing a false
+/// positive.
+pub fn is_apple_target(triple: &str) -> bool {
+    triple.split('-').nth(1) == Some("apple")
+}
+
 /// Where a resolved setting's value came from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Provenance {
@@ -154,6 +201,12 @@ pub struct ResolvedProfile {
     pub debug_assertions: Resolved<bool>,
     /// Whether integer overflow checks are enabled.
     pub overflow_checks: Resolved<bool>,
+    /// Where debug information is emitted.
+    ///
+    /// This is the one setting whose cargo default depends on the target as
+    /// well as the profile: `unpacked` for an Apple target under the `dev`
+    /// profile and `off` everywhere else.
+    pub split_debuginfo: Resolved<SplitDebuginfo>,
 }
 
 /// One of cargo's four built-in profiles.
@@ -196,14 +249,26 @@ impl BuiltinProfile {
 ///
 /// `test` inherits `dev` and `bench` inherits `release`, so those two return the
 /// base profile's settings unchanged apart from the name. No manifest is
-/// consulted, so every setting carries [`Provenance::CargoDefault`].
-pub fn builtin_defaults(profile: BuiltinProfile) -> ResolvedProfile {
-    let (name, base) = match profile {
+/// consulted, so every setting carries [`Provenance::CargoDefault`]. The
+/// `split-debuginfo` default is the one setting that depends on both the
+/// profile and `target_triple`.
+pub fn builtin_defaults(profile: BuiltinProfile, target_triple: &str) -> ResolvedProfile {
+    let (name, mut base) = match profile {
         BuiltinProfile::Dev => ("dev", dev_defaults()),
         BuiltinProfile::Release => ("release", release_defaults()),
         BuiltinProfile::Test => ("test", dev_defaults()),
         BuiltinProfile::Bench => ("bench", release_defaults()),
     };
+
+    // Cargo leaves `split-debuginfo` unset by default except under `dev` on an
+    // Apple target, where it defaults to `unpacked`. That is the only
+    // target-dependent default in the model.
+    base.split_debuginfo = if profile == BuiltinProfile::Dev && is_apple_target(target_triple) {
+        Resolved::new_default(SplitDebuginfo::Unpacked)
+    } else {
+        Resolved::new_default(SplitDebuginfo::Off)
+    };
+
     ResolvedProfile {
         name: name.to_owned(),
         ..base
@@ -223,6 +288,7 @@ fn dev_defaults() -> ResolvedProfile {
         incremental: Resolved::new_default(true),
         debug_assertions: Resolved::new_default(true),
         overflow_checks: Resolved::new_default(true),
+        split_debuginfo: Resolved::new_default(SplitDebuginfo::Off),
     }
 }
 
@@ -239,6 +305,7 @@ fn release_defaults() -> ResolvedProfile {
         incremental: Resolved::new_default(false),
         debug_assertions: Resolved::new_default(false),
         overflow_checks: Resolved::new_default(false),
+        split_debuginfo: Resolved::new_default(SplitDebuginfo::Off),
     }
 }
 
@@ -271,6 +338,8 @@ pub struct ProfileTable {
     pub debug_assertions: Option<(bool, crate::manifest::KeySpan)>,
     /// Value of `overflow-checks`.
     pub overflow_checks: Option<(bool, crate::manifest::KeySpan)>,
+    /// Value of `split-debuginfo`.
+    pub split_debuginfo: Option<(SplitDebuginfo, crate::manifest::KeySpan)>,
 }
 
 /// Reads every immediate `[profile.<name>]` table from `manifest`.
@@ -340,6 +409,7 @@ pub fn profile_tables(
 pub fn resolve_profile(
     manifest: &crate::manifest::ManifestDocument,
     name: &str,
+    target_triple: &str,
 ) -> crate::Result<ResolvedProfile> {
     let tables = profile_tables(manifest)?;
     let path = manifest.path();
@@ -404,7 +474,7 @@ pub fn resolve_profile(
         current = parent;
     };
 
-    let defaults = builtin_defaults(root);
+    let defaults = builtin_defaults(root, target_triple);
     let inherits_chain = traversal.into_iter().skip(1).collect();
 
     Ok(ResolvedProfile {
@@ -472,6 +542,13 @@ pub fn resolve_profile(
             &defaults,
             |table| table.overflow_checks.as_ref(),
             |defaults| &defaults.overflow_checks,
+        ),
+        split_debuginfo: resolve_setting(
+            &chain,
+            name,
+            &defaults,
+            |table| table.split_debuginfo.as_ref(),
+            |defaults| &defaults.split_debuginfo,
         ),
     })
 }
@@ -556,6 +633,12 @@ fn read_profile_table(
             parse_bool,
         )?,
         overflow_checks: read_setting(item("overflow-checks"), ctx, "overflow-checks", parse_bool)?,
+        split_debuginfo: read_setting(
+            item("split-debuginfo"),
+            ctx,
+            "split-debuginfo",
+            parse_split_debuginfo,
+        )?,
     })
 }
 
@@ -758,6 +841,22 @@ fn parse_debug(
     Ok(Some(value))
 }
 
+/// Parses `split-debuginfo`, whose only spellings are the three mode names.
+fn parse_split_debuginfo(
+    item: Option<&toml_edit::Item>,
+    ctx: &SettingContext<'_>,
+    setting: &str,
+) -> crate::Result<Option<SplitDebuginfo>> {
+    let Some(item) = item else {
+        return Ok(None);
+    };
+
+    match item.as_value().and_then(SplitDebuginfo::from_toml_value) {
+        Some(value) => Ok(Some(value)),
+        None => Err(ctx.invalid(setting, render(item))),
+    }
+}
+
 /// Parses the count `codegen-units` holds.
 fn parse_integer(
     item: Option<&toml_edit::Item>,
@@ -808,6 +907,12 @@ fn render(item: &toml_edit::Item) -> String {
 mod tests {
     use super::*;
 
+    /// A non-Apple target triple, for the defaults that do not depend on it.
+    const LINUX: &str = "x86_64-unknown-linux-gnu";
+
+    /// An Apple target triple, for the one default that does.
+    const APPLE: &str = "aarch64-apple-darwin";
+
     #[test]
     fn release_defaults_match_cargo() {
         let expected = ResolvedProfile {
@@ -822,9 +927,10 @@ mod tests {
             incremental: Resolved::new(false, Provenance::CargoDefault),
             debug_assertions: Resolved::new(false, Provenance::CargoDefault),
             overflow_checks: Resolved::new(false, Provenance::CargoDefault),
+            split_debuginfo: Resolved::new(SplitDebuginfo::Off, Provenance::CargoDefault),
         };
 
-        assert_eq!(builtin_defaults(BuiltinProfile::Release), expected);
+        assert_eq!(builtin_defaults(BuiltinProfile::Release, LINUX), expected);
     }
 
     #[test]
@@ -841,25 +947,69 @@ mod tests {
             incremental: Resolved::new(true, Provenance::CargoDefault),
             debug_assertions: Resolved::new(true, Provenance::CargoDefault),
             overflow_checks: Resolved::new(true, Provenance::CargoDefault),
+            split_debuginfo: Resolved::new(SplitDebuginfo::Off, Provenance::CargoDefault),
         };
 
-        assert_eq!(builtin_defaults(BuiltinProfile::Dev), expected);
+        assert_eq!(builtin_defaults(BuiltinProfile::Dev, LINUX), expected);
+    }
+
+    #[test]
+    fn split_debuginfo_default_depends_on_the_target_and_the_profile() {
+        let apple_dev = builtin_defaults(BuiltinProfile::Dev, APPLE);
+        assert_eq!(apple_dev.split_debuginfo.value, SplitDebuginfo::Unpacked);
+        assert_eq!(
+            apple_dev.split_debuginfo.provenance,
+            Provenance::CargoDefault
+        );
+
+        let linux_dev = builtin_defaults(BuiltinProfile::Dev, LINUX);
+        assert_eq!(linux_dev.split_debuginfo.value, SplitDebuginfo::Off);
+
+        let apple_release = builtin_defaults(BuiltinProfile::Release, APPLE);
+        assert_eq!(apple_release.split_debuginfo.value, SplitDebuginfo::Off);
+    }
+
+    #[test]
+    fn apple_target_detection_reads_the_vendor_field() {
+        assert!(is_apple_target("aarch64-apple-darwin"));
+        assert!(is_apple_target("x86_64-apple-ios"));
+        assert!(!is_apple_target(LINUX));
+        // A triple whose vendor field is not `apple` is rejected even when the
+        // string mentions it, so a path or crate name cannot misfire.
+        assert!(!is_apple_target("x86_64-pc-apple-gnu"));
+    }
+
+    #[test]
+    fn explicit_split_debuginfo_carries_its_provenance_and_span() {
+        let document = manifest("[profile.release]\nsplit-debuginfo = \"packed\"\n");
+
+        let tables = profile_tables(&document).unwrap();
+        let (value, span) = tables["release"].split_debuginfo.as_ref().unwrap();
+        assert_eq!(*value, SplitDebuginfo::Packed);
+        assert_eq!(span.key, "profile.release.split-debuginfo");
+
+        let resolved = resolve_profile(&document, "release", LINUX).unwrap();
+        assert_eq!(resolved.split_debuginfo.value, SplitDebuginfo::Packed);
+        assert!(matches!(
+            resolved.split_debuginfo.provenance,
+            Provenance::Explicit { ref profile, .. } if profile == "release"
+        ));
     }
 
     #[test]
     fn test_profile_defaults_track_dev() {
-        let mut expected = builtin_defaults(BuiltinProfile::Dev);
+        let mut expected = builtin_defaults(BuiltinProfile::Dev, LINUX);
         expected.name = "test".to_owned();
 
-        assert_eq!(builtin_defaults(BuiltinProfile::Test), expected);
+        assert_eq!(builtin_defaults(BuiltinProfile::Test, LINUX), expected);
     }
 
     #[test]
     fn bench_profile_defaults_track_release() {
-        let mut expected = builtin_defaults(BuiltinProfile::Release);
+        let mut expected = builtin_defaults(BuiltinProfile::Release, LINUX);
         expected.name = "bench".to_owned();
 
-        assert_eq!(builtin_defaults(BuiltinProfile::Bench), expected);
+        assert_eq!(builtin_defaults(BuiltinProfile::Bench, LINUX), expected);
     }
 
     #[test]
@@ -1044,16 +1194,16 @@ mod tests {
     fn unset_keys_fall_back_to_cargo_defaults() {
         let document = manifest("[package]\nname = \"demo\"\n");
 
-        let resolved = resolve_profile(&document, "release").unwrap();
+        let resolved = resolve_profile(&document, "release", LINUX).unwrap();
 
-        assert_eq!(resolved, builtin_defaults(BuiltinProfile::Release));
+        assert_eq!(resolved, builtin_defaults(BuiltinProfile::Release, LINUX));
     }
 
     #[test]
     fn explicit_setting_is_marked_explicit() {
         let document = manifest("[profile.release]\nlto = true\n");
 
-        let resolved = resolve_profile(&document, "release").unwrap();
+        let resolved = resolve_profile(&document, "release", LINUX).unwrap();
 
         assert_eq!(resolved.name, "release");
         assert!(resolved.inherits_chain.is_empty());
@@ -1071,7 +1221,7 @@ mod tests {
             "[profile.fast]\ninherits = \"release\"\nlto = true\n[profile.custom]\ninherits = \"fast\"\n",
         );
 
-        let resolved = resolve_profile(&document, "custom").unwrap();
+        let resolved = resolve_profile(&document, "custom", LINUX).unwrap();
 
         assert_eq!(resolved.name, "custom");
         assert_eq!(resolved.inherits_chain, vec!["fast", "release"]);
@@ -1092,7 +1242,7 @@ mod tests {
              [profile.leaf]\ninherits = \"middle\"\npanic = \"abort\"\n",
         );
 
-        let resolved = resolve_profile(&document, "leaf").unwrap();
+        let resolved = resolve_profile(&document, "leaf", LINUX).unwrap();
 
         assert_eq!(resolved.name, "leaf");
         assert_eq!(resolved.inherits_chain, vec!["middle", "root", "release"]);
@@ -1116,7 +1266,7 @@ mod tests {
     fn custom_profile_name_resolves_through_its_chain() {
         let document = manifest("[profile.tuned]\ninherits = \"release\"\nlto = \"thin\"\n");
 
-        let resolved = resolve_profile(&document, "tuned").unwrap();
+        let resolved = resolve_profile(&document, "tuned", LINUX).unwrap();
 
         assert_eq!(resolved.name, "tuned");
         assert_eq!(resolved.inherits_chain, vec!["release"]);
@@ -1135,7 +1285,7 @@ mod tests {
             "[profile.first]\ninherits = \"second\"\n[profile.second]\ninherits = \"first\"\n",
         );
 
-        let error = resolve_profile(&document, "first").unwrap_err();
+        let error = resolve_profile(&document, "first", LINUX).unwrap_err();
 
         match error {
             crate::ZempicError::ProfileInheritsCycle { path, chain } => {
@@ -1150,7 +1300,7 @@ mod tests {
     fn unknown_requested_profile_is_an_error() {
         let document = manifest("[package]\nname = \"demo\"\n");
 
-        let error = resolve_profile(&document, "mystery").unwrap_err();
+        let error = resolve_profile(&document, "mystery", LINUX).unwrap_err();
 
         match error {
             crate::ZempicError::UnknownProfile { path, name } => {
@@ -1165,7 +1315,7 @@ mod tests {
     fn unknown_inherits_target_is_an_error() {
         let document = manifest("[profile.custom]\ninherits = \"nowhere\"\n");
 
-        let error = resolve_profile(&document, "custom").unwrap_err();
+        let error = resolve_profile(&document, "custom", LINUX).unwrap_err();
 
         match error {
             crate::ZempicError::UnknownInheritedProfile {
@@ -1185,7 +1335,7 @@ mod tests {
     fn custom_profile_without_inherits_is_an_error() {
         let document = manifest("[profile.shortcut]\nlto = true\n");
 
-        let error = resolve_profile(&document, "shortcut").unwrap_err();
+        let error = resolve_profile(&document, "shortcut", LINUX).unwrap_err();
 
         match error {
             crate::ZempicError::CustomProfileMissingInherits { path, name } => {
@@ -1200,7 +1350,7 @@ mod tests {
     fn inherits_may_name_a_builtin_without_a_table() {
         let document = manifest("[profile.tuned]\ninherits = \"release\"\nlto = \"thin\"\n");
 
-        let resolved = resolve_profile(&document, "tuned").unwrap();
+        let resolved = resolve_profile(&document, "tuned", LINUX).unwrap();
 
         assert_eq!(resolved.inherits_chain, vec!["release"]);
         assert_eq!(resolved.opt_level.value, OptLevel::Three);
@@ -1211,7 +1361,7 @@ mod tests {
     fn builtin_tracking_marks_the_tracked_table_as_inherited() {
         let document = manifest("[profile.dev]\nlto = \"thin\"\n");
 
-        let resolved = resolve_profile(&document, "test").unwrap();
+        let resolved = resolve_profile(&document, "test", LINUX).unwrap();
 
         assert_eq!(resolved.inherits_chain, vec!["dev"]);
         assert_eq!(resolved.lto.value, Lto::Thin);
@@ -1225,7 +1375,7 @@ mod tests {
     fn builtin_bench_tracks_release_table_as_inherited() {
         let document = manifest("[profile.release]\nlto = true\n");
 
-        let resolved = resolve_profile(&document, "bench").unwrap();
+        let resolved = resolve_profile(&document, "bench", LINUX).unwrap();
 
         assert_eq!(resolved.inherits_chain, vec!["release"]);
         assert_eq!(resolved.lto.value, Lto::Fat);
@@ -1239,7 +1389,7 @@ mod tests {
     fn builtin_table_may_declare_its_own_inherits() {
         let document = manifest("[profile.release]\ninherits = \"dev\"\nlto = \"thin\"\n");
 
-        let resolved = resolve_profile(&document, "release").unwrap();
+        let resolved = resolve_profile(&document, "release", LINUX).unwrap();
 
         assert_eq!(resolved.inherits_chain, vec!["dev"]);
         assert_eq!(resolved.lto.value, Lto::Thin);
@@ -1255,7 +1405,7 @@ mod tests {
     fn builtin_declaring_itself_as_inherits_is_a_cycle() {
         let document = manifest("[profile.dev]\ninherits = \"dev\"\n");
 
-        let error = resolve_profile(&document, "dev").unwrap_err();
+        let error = resolve_profile(&document, "dev", LINUX).unwrap_err();
 
         match error {
             crate::ZempicError::ProfileInheritsCycle { path, chain } => {

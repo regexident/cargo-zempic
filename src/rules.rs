@@ -391,7 +391,10 @@ mod tests {
             workspace_root: camino::Utf8PathBuf::from("/w"),
             member_count: 1,
             selected: Vec::new(),
-            profile: crate::profile::builtin_defaults(crate::profile::BuiltinProfile::Release),
+            profile: crate::profile::builtin_defaults(
+                crate::profile::BuiltinProfile::Release,
+                "x86_64-unknown-linux-gnu",
+            ),
             target_triple: "x86_64-unknown-linux-gnu".to_owned(),
             dimensions: vec![
                 crate::dimension::Dimension::Size,

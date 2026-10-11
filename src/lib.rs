@@ -385,7 +385,7 @@ fn finish(
     dimensions: Vec<dimension::Dimension>,
     root_manifest: &manifest::ManifestDocument,
 ) -> Result<Resolution> {
-    let profile = profile::resolve_profile(root_manifest, profile_name)?;
+    let profile = profile::resolve_profile(root_manifest, profile_name, &scope.target_triple)?;
 
     let mut seen = std::collections::BTreeSet::new();
     let mut effective = Vec::new();
