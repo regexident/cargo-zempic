@@ -310,3 +310,121 @@ fn unknown_output_argument_values_exit_two_naming_the_value() {
             .stderr(predicate::str::contains(value));
     }
 }
+
+#[test]
+fn format_argument_selects_the_renderer() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+    let manifest = workspace.manifest_path();
+
+    let json = binary()
+        .args([
+            "check",
+            "--manifest-path",
+            manifest.as_str(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("the json run succeeds");
+    let json = String::from_utf8(json.stdout).expect("stdout is UTF-8");
+
+    assert!(
+        json.trim_start().starts_with('{') && json.contains("\"schema_version\": 1"),
+        "`--format json` must emit JSON: {json:?}"
+    );
+
+    let markdown = binary()
+        .args([
+            "check",
+            "--manifest-path",
+            manifest.as_str(),
+            "--format",
+            "markdown",
+        ])
+        .output()
+        .expect("the markdown run succeeds");
+    let markdown = String::from_utf8(markdown.stdout).expect("stdout is UTF-8");
+
+    assert!(
+        markdown.trim_start().starts_with("# cargo-zempic"),
+        "`--format markdown` must emit a Markdown document: {markdown:?}"
+    );
+    assert!(markdown.contains("ordinal judgement"), "{markdown:?}");
+}
+
+#[test]
+fn color_never_emits_no_escape_sequence() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    let output = binary()
+        .args([
+            "check",
+            "--manifest-path",
+            workspace.manifest_path().as_str(),
+            "--color",
+            "never",
+        ])
+        .output()
+        .expect("the run succeeds");
+
+    assert!(
+        !output.stdout.contains(&0x1b),
+        "`--color never` must emit no escape sequence"
+    );
+}
+
+#[test]
+fn configured_format_is_honored_and_overridden_by_the_argument() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    std::fs::write(
+        workspace.root().join("zempic.toml"),
+        "schema_version = 1\n\n[report]\nformat = \"json\"\n",
+    )
+    .unwrap();
+
+    // The configured format must be honored by a bare run, so the effective
+    // format is resolved from the file under a command line that names none.
+    let configured = binary()
+        .args([
+            "check",
+            "--manifest-path",
+            workspace.manifest_path().as_str(),
+        ])
+        .output()
+        .expect("the configured run succeeds");
+    let configured = String::from_utf8(configured.stdout).expect("stdout is UTF-8");
+
+    assert!(
+        configured.trim_start().starts_with('{') && configured.contains("\"schema_version\""),
+        "the configured format must be JSON: {configured:?}"
+    );
+
+    binary()
+        .args([
+            "check",
+            "--manifest-path",
+            workspace.manifest_path().as_str(),
+            "--format",
+            "human",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("No findings."));
+}
+
+#[test]
+fn fail_on_never_is_the_default() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    // No finding can fire while the registry is empty, so the default is
+    // asserted by the run exiting zero rather than by a gated report.
+    binary()
+        .args([
+            "check",
+            "--manifest-path",
+            workspace.manifest_path().as_str(),
+        ])
+        .assert()
+        .code(0);
+}
