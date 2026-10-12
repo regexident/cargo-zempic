@@ -1,0 +1,8 @@
+[package]
+name = "bare-release"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "bare-release"
+path = "src/main.rs"

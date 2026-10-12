@@ -103,6 +103,116 @@ fn materialized_roots_are_distinct_between_calls() {
     assert_ne!(first.root(), second.root());
 }
 
+/// The fixture directories the rule tests name, one per rule condition.
+const RULE_FIXTURES: [&str; 14] = [
+    "fully-optimized",
+    "bare-release",
+    "strip-none",
+    "debug-info-enabled",
+    "split-debuginfo-off",
+    "opt-level-speed",
+    "lto-thin",
+    "codegen-units-many",
+    "incremental-enabled",
+    "dependency-opt-level",
+    "panic-unwind",
+    "debug-assertions-enabled",
+    "overflow-checks-enabled",
+    "member-profile-table",
+];
+
+/// Every fixture materializes into a workspace `cargo metadata` resolves.
+#[test]
+fn every_fixture_materializes_and_resolves() {
+    for name in RULE_FIXTURES {
+        let workspace = common::Fixture::new(name).materialize();
+        let config = analysis_config(&workspace);
+
+        let resolution = resolve(&config)
+            .unwrap_or_else(|error| panic!("fixture `{name}` must resolve: {error}"));
+
+        assert!(
+            resolution.member_count >= 1,
+            "fixture `{name}` must select at least one member"
+        );
+    }
+}
+
+/// Every fixture directory is named by at least one test source file.
+#[test]
+fn every_fixture_directory_is_referenced_by_a_test() {
+    let fixtures = camino::Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+
+    let mut sources = String::new();
+
+    for name in ["rules.rs", "cli.rs", "render.rs"] {
+        let path = fixtures.parent().unwrap().join(name);
+        sources.push_str(&std::fs::read_to_string(&path).unwrap_or_default());
+    }
+
+    for entry in std::fs::read_dir(&fixtures).unwrap().flatten() {
+        if !entry.file_type().unwrap().is_dir() {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().into_owned();
+
+        assert!(
+            sources.contains(&format!("\"{name}\"")),
+            "fixture directory `{name}` is referenced by no test"
+        );
+    }
+}
+
+/// No fixture declares an external dependency.
+#[test]
+fn no_fixture_declares_an_external_dependency() {
+    let fixtures = camino::Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut manifests = Vec::new();
+    collect_fixture_manifests(&fixtures, &mut manifests);
+
+    for path in manifests {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let document = text
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap_or_else(|error| panic!("`{path}` must parse: {error}"));
+
+        for table in ["dependencies", "dev-dependencies", "build-dependencies"] {
+            let Some(dependencies) = document.get(table).and_then(|item| item.as_table_like())
+            else {
+                continue;
+            };
+
+            for (name, value) in dependencies.iter() {
+                assert!(
+                    value.get("path").is_some(),
+                    "`{path}` declares external dependency `{name}`"
+                );
+            }
+        }
+    }
+}
+
+/// Collect every `Cargo.toml` under `directory` into `manifests`.
+fn collect_fixture_manifests(
+    directory: &camino::Utf8Path,
+    manifests: &mut Vec<camino::Utf8PathBuf>,
+) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = camino::Utf8PathBuf::from_path_buf(entry.path()).expect("paths are UTF-8");
+
+        if path.is_dir() {
+            collect_fixture_manifests(&path, manifests);
+        } else if path.file_name() == Some("Cargo.toml") {
+            manifests.push(path);
+        }
+    }
+}
+
 #[test]
 fn host_target_triple_matches_rustc() {
     let output = std::process::Command::new("rustc")

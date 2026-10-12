@@ -1,0 +1,23 @@
+[package]
+name = "split-debuginfo-off"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "split-debuginfo-off"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+strip = "symbols"
+panic = "abort"
+codegen-units = 1
+incremental = false
+debug = true
+debug-assertions = false
+overflow-checks = false
+split-debuginfo = "off"
+
+[profile.release.package."*"]
+opt-level = "z"

@@ -1,0 +1,23 @@
+[package]
+name = "incremental-enabled"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "incremental-enabled"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+strip = "symbols"
+panic = "abort"
+codegen-units = 1
+incremental = true
+debug = false
+debug-assertions = false
+overflow-checks = false
+split-debuginfo = "packed"
+
+[profile.release.package."*"]
+opt-level = "z"

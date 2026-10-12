@@ -1,0 +1,20 @@
+[package]
+name = "dependency-opt-level"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "dependency-opt-level"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+strip = "symbols"
+panic = "abort"
+codegen-units = 1
+incremental = false
+debug = false
+debug-assertions = false
+overflow-checks = false
+split-debuginfo = "packed"
