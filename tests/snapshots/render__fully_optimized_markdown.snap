@@ -1,0 +1,15 @@
+---
+source: tests/render.rs
+expression: document
+---
+# cargo-zempic 0.0.1
+
+- Workspace: `[WORKSPACE_ROOT]`
+- Members: 1 (1 selected)
+- Profile: `release` (inherits: none)
+- Optimizing for: size
+- Target: `aarch64-apple-darwin`
+
+No findings.
+
+Magnitude is an ordinal judgement, not a measurement. zempic does not build and does not read compiled artifacts, so it reports no sizes.

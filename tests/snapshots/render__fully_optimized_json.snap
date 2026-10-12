@@ -1,0 +1,33 @@
+---
+source: tests/render.rs
+expression: document
+---
+{
+  "schema_version": 1,
+  "zempic_version": "0.0.1",
+  "workspace_root": "[WORKSPACE_ROOT]",
+  "profile": "release",
+  "dimensions": [
+    "size"
+  ],
+  "findings": [],
+  "conflicts": [],
+  "summary": {
+    "total": 0,
+    "fixable": 0,
+    "by_severity": {
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "info": 0
+    },
+    "by_magnitude": {
+      "large": 0,
+      "moderate": 0,
+      "small": 0,
+      "negligible": 0,
+      "none": 0
+    }
+  },
+  "legend": "Magnitude is an ordinal judgement, not a measurement. zempic does not build and does not read compiled artifacts, so it reports no sizes."
+}
