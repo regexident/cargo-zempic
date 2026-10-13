@@ -107,3 +107,11 @@ fn split_debuginfo_off_human() {
         ),
     );
 }
+
+#[test]
+fn opt_level_speed_human() {
+    assert_snapshot(
+        "opt_level_speed_human",
+        rendered("opt-level-speed", Format::Human),
+    );
+}

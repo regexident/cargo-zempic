@@ -139,6 +139,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             documentation: include_str!("rules/docs/profile/missing-config.md"),
         },
         RuleMetadata {
+            rule: &crate::rules::profile::OPT_LEVEL_RULE,
+            id: "profile/opt-level:size",
+            tier: crate::finding::Tier::Compiler,
+            magnitude: crate::finding::Magnitude::Large,
+            fixability: crate::finding::Fixability::Consequential,
+            summary: "Reporting an optimization level that does not target size",
+            documentation: include_str!("rules/docs/profile/opt-level.md"),
+        },
+        RuleMetadata {
             rule: &crate::rules::profile::SPLIT_DEBUGINFO_RULE,
             id: "profile/split-debuginfo",
             tier: crate::finding::Tier::Foundational,

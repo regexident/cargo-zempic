@@ -15,7 +15,7 @@
 
 use crate::finding::{Change, Confidence, Effort, Finding, Location, RuleId, RuntimeCost};
 use crate::manifest::KeySpan;
-use crate::profile::{DebugInfo, Provenance, Resolved, SplitDebuginfo, Strip};
+use crate::profile::{DebugInfo, OptLevel, Provenance, Resolved, SplitDebuginfo, Strip};
 use crate::rules::{Rule, RuleContext, RuleMetadata};
 
 /// Whether any selected package emits an artifact the profile governs.
@@ -222,6 +222,67 @@ fn profile_table_location(context: &RuleContext<'_>, name: &str) -> Option<KeySp
 
     crate::profile::profile_table_for(&tables, name)
         .and_then(|_| context.root_manifest.key_span(&format!("profile.{name}")))
+}
+
+/// Reports an optimization level that does not target size.
+pub struct OptLevelRule;
+
+/// The instance registered for [`OptLevelRule`].
+pub const OPT_LEVEL_RULE: OptLevelRule = OptLevelRule;
+
+impl Rule for OptLevelRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        if !profile_rules_apply(context) {
+            return Vec::new();
+        }
+
+        // The rule answers only the size dimension; under any other dimension it
+        // has no recommendation.
+        if context.dimension != crate::dimension::Dimension::Size {
+            return Vec::new();
+        }
+
+        let opt_level = &context.resolution.profile.opt_level;
+        if is_size_level(opt_level.value) {
+            return Vec::new();
+        }
+
+        let metadata = registered("profile/opt-level:size");
+
+        let mut finding = build(
+            metadata,
+            None,
+            Some(Change {
+                current: current_text(opt_level, render_opt_level),
+                recommended: "\"z\"".to_owned(),
+            }),
+            location_of(opt_level),
+            "The optimization level does not target size",
+            "The compiler optimizes for speed. Optimizing for size lets it drop \
+             code that exists only to run faster."
+                .to_owned(),
+            "Runtime cost, pronounced with `\"z\"` on compute-heavy code.",
+        );
+        finding.runtime_cost = RuntimeCost::Notable;
+
+        vec![finding]
+    }
+}
+/// Whether an optimization level targets size, `"s"` or `"z"`.
+fn is_size_level(value: OptLevel) -> bool {
+    matches!(value, OptLevel::Size | OptLevel::SizeNoVectorize)
+}
+
+/// Render an `opt-level` value the way a manifest spells it.
+fn render_opt_level(value: OptLevel) -> String {
+    match value {
+        OptLevel::Zero => "0".to_owned(),
+        OptLevel::One => "1".to_owned(),
+        OptLevel::Two => "2".to_owned(),
+        OptLevel::Three => "3".to_owned(),
+        OptLevel::Size => "\"s\"".to_owned(),
+        OptLevel::SizeNoVectorize => "\"z\"".to_owned(),
+    }
 }
 
 /// The registered metadata for `id`.

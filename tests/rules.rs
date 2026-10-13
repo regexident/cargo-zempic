@@ -1976,3 +1976,43 @@ fn missing_config_is_quiet_for_an_inherited_profile() {
         finding_rules(&report.findings)
     );
 }
+
+// MARK: Tier 2 compiler rules
+
+#[test]
+fn opt_level_fires_for_the_size_dimension() {
+    use cargo_zempic::finding::{Fixability, Magnitude, RuntimeCost, Severity, Tier};
+
+    let findings = findings_for("opt-level-speed", None);
+    let finding = finding_for(&findings, "profile/opt-level:size");
+
+    assert_eq!(finding.tier, Tier::Compiler);
+    assert_eq!(finding.severity, Severity::High);
+    assert_eq!(finding.magnitude, Magnitude::Large);
+    assert_eq!(finding.fixability, Fixability::Consequential);
+    assert_eq!(finding.runtime_cost, RuntimeCost::Notable);
+    assert_eq!(
+        finding
+            .change
+            .as_ref()
+            .map(|change| change.recommended.as_str()),
+        Some("\"z\"")
+    );
+    assert!(finding.location.is_some());
+
+    assert_eq!(
+        cargo_zempic::rules::documentation_path(&finding.rule),
+        "profile/opt-level.md"
+    );
+}
+
+#[test]
+fn tier_two_rules_are_quiet_when_fully_optimized() {
+    let findings = findings_for("fully-optimized", None);
+    let rules = finding_rules(&findings);
+
+    assert!(
+        !rules.contains(&"profile/opt-level:size".to_owned()),
+        "`profile/opt-level:size` must not fire when fully optimized: {rules:?}"
+    );
+}

@@ -1,0 +1,23 @@
+---
+source: tests/render.rs
+expression: document
+---
+cargo-zempic 0.0.1
+    workspace: [WORKSPACE_ROOT]  (1 members, 1 selected)
+      profile: release  (inherits: none)
+optimizing for: size
+       target: aarch64-apple-darwin
+
+TIER 2  COMPILER                                                       1 finding
+
+  HIGH   large  profile/opt-level:size           3 -> "z"
+        effort: trivial   runtime cost: notable   fix: consequential
+        The compiler optimizes for speed. Optimizing for size lets it drop code
+        that exists only to run faster.
+        Tradeoff: Runtime cost, pronounced with `"z"` on compute-heavy code.
+SUMMARY
+  1 finding: 1 high.  By magnitude: 1 large.
+  1 auto-fixable.
+
+  Magnitude is an ordinal judgement, not a measurement. zempic does not build
+  and does not read compiled artifacts, so it reports no sizes.
