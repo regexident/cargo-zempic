@@ -1,0 +1,29 @@
+---
+source: tests/render.rs
+expression: document
+---
+cargo-zempic 0.0.1
+    workspace: [WORKSPACE_ROOT]  (1 members, 1 selected)
+      profile: release  (inherits: none)
+optimizing for: size
+       target: aarch64-apple-darwin
+
+TIER 2  COMPILER                                                      2 findings
+
+  HIGH   large  profile/opt-level:size           3 -> "z"
+        effort: trivial   runtime cost: notable   fix: consequential
+        The compiler optimizes for speed. Optimizing for size lets it drop code
+        that exists only to run faster.
+        Tradeoff: Runtime cost, pronounced with `"z"` on compute-heavy code.
+  MEDIUM moderate profile/dependency-opt-level     unset -> "z"
+        effort: trivial   runtime cost: none   fix: safe
+        The profile's optimization level applies to dependencies too. A glob
+        override optimizes them for size while leaving the workspace's members
+        on the profile's setting.
+        Tradeoff: The override applies to dependencies, not to workspace members.
+SUMMARY
+  2 findings: 1 high, 1 medium.  By magnitude: 1 large, 1 moderate.
+  2 auto-fixable.
+
+  Magnitude is an ordinal judgement, not a measurement. zempic does not build
+  and does not read compiled artifacts, so it reports no sizes.

@@ -377,6 +377,58 @@ impl Rule for IncrementalRule {
     }
 }
 
+/// Reports unoptimized dependencies under a size-oriented profile.
+pub struct DependencyOptLevelRule;
+
+/// The instance registered for [`DependencyOptLevelRule`].
+pub const DEPENDENCY_OPT_LEVEL_RULE: DependencyOptLevelRule = DependencyOptLevelRule;
+
+impl Rule for DependencyOptLevelRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        if !profile_rules_apply(context) {
+            return Vec::new();
+        }
+
+        let opt_level = &context.resolution.profile.opt_level;
+
+        // The condition is an explicitly or inherited non-size `opt-level` with
+        // no glob override of it; that is exactly the state the remedy addresses.
+        if opt_level.is_cargo_default() || is_size_level(opt_level.value) {
+            return Vec::new();
+        }
+
+        let tables = crate::profile::profile_tables(context.root_manifest)
+            .expect("the root manifest already parsed during profile resolution");
+        let table = crate::profile::profile_table_for(&tables, &context.resolution.profile.name);
+
+        let override_present = table
+            .and_then(|table| table.glob_package_override())
+            .is_some_and(|entry| entry.opt_level.is_some());
+
+        if override_present {
+            return Vec::new();
+        }
+
+        let metadata = registered("profile/dependency-opt-level");
+
+        vec![build(
+            metadata,
+            None,
+            Some(Change {
+                current: "unset".to_owned(),
+                recommended: "\"z\"".to_owned(),
+            }),
+            location_of(opt_level),
+            "Dependencies are not optimized separately",
+            "The profile's optimization level applies to dependencies too. A glob \
+             override optimizes them for size while leaving the workspace's members \
+             on the profile's setting."
+                .to_owned(),
+            "The override applies to dependencies, not to workspace members.",
+        )]
+    }
+}
+
 /// Whether an optimization level targets size, `"s"` or `"z"`.
 fn is_size_level(value: OptLevel) -> bool {
     matches!(value, OptLevel::Size | OptLevel::SizeNoVectorize)

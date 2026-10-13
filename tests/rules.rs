@@ -2061,6 +2061,27 @@ fn incremental_is_quiet_on_the_dev_profile() {
 }
 
 #[test]
+fn dependency_opt_level_is_quiet_when_the_override_exists() {
+    let findings = findings_for("opt-level-speed", None);
+
+    // `opt-level-speed` carries the glob override, so the rule is quiet even
+    // though `opt-level` is not a size level.
+    assert!(
+        !finding_rules(&findings).contains(&"profile/dependency-opt-level".to_owned()),
+        "the glob override quiets the rule: {:?}",
+        finding_rules(&findings)
+    );
+
+    let firing = findings_for("dependency-opt-level", None);
+
+    assert!(
+        finding_rules(&firing).contains(&"profile/dependency-opt-level".to_owned()),
+        "without the override the rule fires: {:?}",
+        finding_rules(&firing)
+    );
+}
+
+#[test]
 fn tier_two_rules_are_quiet_when_fully_optimized() {
     let findings = findings_for("fully-optimized", None);
     let rules = finding_rules(&findings);
@@ -2070,6 +2091,7 @@ fn tier_two_rules_are_quiet_when_fully_optimized() {
         "profile/lto",
         "profile/codegen-units",
         "profile/incremental",
+        "profile/dependency-opt-level",
     ] {
         assert!(
             !rules.contains(&absent.to_owned()),

@@ -136,3 +136,11 @@ fn incremental_enabled_human() {
         rendered("incremental-enabled", Format::Human),
     );
 }
+
+#[test]
+fn dependency_opt_level_human() {
+    assert_snapshot(
+        "dependency_opt_level_human",
+        rendered("dependency-opt-level", Format::Human),
+    );
+}

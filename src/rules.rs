@@ -175,6 +175,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             documentation: include_str!("rules/docs/profile/incremental.md"),
         },
         RuleMetadata {
+            rule: &crate::rules::profile::DEPENDENCY_OPT_LEVEL_RULE,
+            id: "profile/dependency-opt-level",
+            tier: crate::finding::Tier::Compiler,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::Safe,
+            summary: "Reporting unoptimized dependencies under a debuggable profile",
+            documentation: include_str!("rules/docs/profile/dependency-opt-level.md"),
+        },
+        RuleMetadata {
             rule: &crate::rules::profile::SPLIT_DEBUGINFO_RULE,
             id: "profile/split-debuginfo",
             tier: crate::finding::Tier::Foundational,
