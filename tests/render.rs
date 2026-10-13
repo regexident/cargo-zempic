@@ -85,3 +85,11 @@ fn fully_optimized_markdown() {
 fn strip_none_human() {
     assert_snapshot("strip_none_human", rendered("strip-none", Format::Human));
 }
+
+#[test]
+fn debug_info_enabled_human() {
+    assert_snapshot(
+        "debug_info_enabled_human",
+        rendered("debug-info-enabled", Format::Human),
+    );
+}

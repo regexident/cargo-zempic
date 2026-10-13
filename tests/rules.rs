@@ -1804,6 +1804,46 @@ fn strip_reports_unset_on_a_bare_profile() {
 }
 
 #[test]
+fn debug_info_fires_and_accounts_for_strip() {
+    // `debug-info-enabled` keeps `strip = "symbols"`, so the detail states the
+    // gain is compile time and intermediate disk.
+    let stripped = findings_for("debug-info-enabled", None);
+    let with_strip = finding_for(&stripped, "profile/debug-info");
+
+    assert!(
+        with_strip.detail.contains("compile time"),
+        "stripped detail must name compile time: {}",
+        with_strip.detail
+    );
+    assert_eq!(
+        with_strip
+            .change
+            .as_ref()
+            .map(|change| change.recommended.as_str()),
+        Some("false")
+    );
+
+    // A fixture with `debug` enabled and no stripping gets the artifact-retention
+    // wording instead.
+    let workspace = common::Fixture::new("debug-info-enabled").materialize();
+    let root_manifest = std::fs::read_to_string(workspace.root().join("Cargo.toml"))
+        .unwrap()
+        .replace("strip = \"symbols\"", "strip = \"none\"");
+    std::fs::write(workspace.root().join("Cargo.toml"), root_manifest).unwrap();
+
+    let mut config = analyze_config(&workspace, &[]);
+    config.target = None;
+    let report = cargo_zempic::analyze(&config).expect("the analysis succeeds");
+    let unstripped = finding_for(&report.findings, "profile/debug-info");
+
+    assert!(
+        !unstripped.detail.contains("compile time"),
+        "unstripped detail must not name compile time: {}",
+        unstripped.detail
+    );
+}
+
+#[test]
 fn tier_one_symbol_rules_are_quiet_when_fully_optimized() {
     let findings = findings_for("fully-optimized", None);
     let rules = finding_rules(&findings);

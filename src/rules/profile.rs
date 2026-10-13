@@ -15,7 +15,7 @@
 
 use crate::finding::{Change, Confidence, Effort, Finding, Location, RuleId, RuntimeCost};
 use crate::manifest::KeySpan;
-use crate::profile::{Provenance, Resolved, Strip};
+use crate::profile::{DebugInfo, Provenance, Resolved, Strip};
 use crate::rules::{Rule, RuleContext, RuleMetadata};
 
 /// Whether any selected package emits an artifact the profile governs.
@@ -64,6 +64,61 @@ impl Rule for StripRule {
             "Stripping removes function names from backtraces and profiler output.",
         )]
     }
+}
+
+/// Reports debug information written into the linked artifact.
+pub struct DebugInfoRule;
+
+/// The instance registered for [`DebugInfoRule`].
+pub const DEBUG_INFO_RULE: DebugInfoRule = DebugInfoRule;
+
+impl Rule for DebugInfoRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        if !profile_rules_apply(context) {
+            return Vec::new();
+        }
+
+        let debug = &context.resolution.profile.debug;
+        if !debug_info_enabled(debug.value) {
+            return Vec::new();
+        }
+
+        let metadata = registered("profile/debug-info");
+
+        // When stripping already removes symbols, the linked artifact changes
+        // little, so the benefit is compile time and intermediate disk.
+        let detail = if context.resolution.profile.strip.value == Strip::Symbols {
+            "Debug information is produced and then dropped by stripping. Disabling \
+             `debug` saves compile time and the intermediate disk it writes while \
+             leaving the linked artifact largely unchanged."
+                .to_owned()
+        } else {
+            "Debug information is written into the artifact. Disabling `debug` keeps \
+             it out of the linked artifact."
+                .to_owned()
+        };
+
+        vec![build(
+            metadata,
+            None,
+            Some(Change {
+                current: current_text(debug, render_debug_info),
+                recommended: "false".to_owned(),
+            }),
+            location_of(debug),
+            "Debug information is enabled",
+            detail,
+            "A binary built without debug information cannot be stepped through.",
+        )]
+    }
+}
+
+/// Whether a debug level emits debug information.
+///
+/// `0` and `"none"` are the only values that emit none; every other variant
+/// writes at least line tables.
+fn debug_info_enabled(level: DebugInfo) -> bool {
+    !matches!(level, DebugInfo::None)
 }
 
 /// The registered metadata for `id`.
@@ -138,5 +193,16 @@ fn render_strip(value: Strip) -> String {
         Strip::None => "\"none\"".to_owned(),
         Strip::DebugInfo => "\"debuginfo\"".to_owned(),
         Strip::Symbols => "\"symbols\"".to_owned(),
+    }
+}
+
+/// Render a `debug` value the way a manifest spells it.
+fn render_debug_info(value: DebugInfo) -> String {
+    match value {
+        DebugInfo::None => "false".to_owned(),
+        DebugInfo::LineDirectivesOnly => "\"line-directives-only\"".to_owned(),
+        DebugInfo::LineTablesOnly => "\"line-tables-only\"".to_owned(),
+        DebugInfo::Limited => "\"limited\"".to_owned(),
+        DebugInfo::Full => "true".to_owned(),
     }
 }

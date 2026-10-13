@@ -110,15 +110,26 @@ impl RuleMetadata {
 /// severity tests enumerate. Each entry's severity is looked up in
 /// [`severity_assignments`] rather than stored on the entry.
 pub fn registry() -> &'static [RuleMetadata] {
-    const REGISTRY: &[RuleMetadata] = &[RuleMetadata {
-        rule: &crate::rules::profile::STRIP_RULE,
-        id: "profile/strip",
-        tier: crate::finding::Tier::Foundational,
-        magnitude: crate::finding::Magnitude::Large,
-        fixability: crate::finding::Fixability::Safe,
-        summary: "Reporting a profile that retains symbols in the linked artifact",
-        documentation: include_str!("rules/docs/profile/strip.md"),
-    }];
+    const REGISTRY: &[RuleMetadata] = &[
+        RuleMetadata {
+            rule: &crate::rules::profile::STRIP_RULE,
+            id: "profile/strip",
+            tier: crate::finding::Tier::Foundational,
+            magnitude: crate::finding::Magnitude::Large,
+            fixability: crate::finding::Fixability::Safe,
+            summary: "Reporting a profile that retains symbols in the linked artifact",
+            documentation: include_str!("rules/docs/profile/strip.md"),
+        },
+        RuleMetadata {
+            rule: &crate::rules::profile::DEBUG_INFO_RULE,
+            id: "profile/debug-info",
+            tier: crate::finding::Tier::Foundational,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::Safe,
+            summary: "Reporting retained debug information in the linked artifact",
+            documentation: include_str!("rules/docs/profile/debug-info.md"),
+        },
+    ];
 
     REGISTRY
 }
