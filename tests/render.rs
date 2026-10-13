@@ -128,3 +128,11 @@ fn codegen_units_many_human() {
         rendered("codegen-units-many", Format::Human),
     );
 }
+
+#[test]
+fn incremental_enabled_human() {
+    assert_snapshot(
+        "incremental_enabled_human",
+        rendered("incremental-enabled", Format::Human),
+    );
+}

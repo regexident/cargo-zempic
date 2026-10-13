@@ -166,6 +166,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             documentation: include_str!("rules/docs/profile/codegen-units.md"),
         },
         RuleMetadata {
+            rule: &crate::rules::profile::INCREMENTAL_RULE,
+            id: "profile/incremental",
+            tier: crate::finding::Tier::Compiler,
+            magnitude: crate::finding::Magnitude::Small,
+            fixability: crate::finding::Fixability::Safe,
+            summary: "Reporting incremental compilation in a release-like profile",
+            documentation: include_str!("rules/docs/profile/incremental.md"),
+        },
+        RuleMetadata {
             rule: &crate::rules::profile::SPLIT_DEBUGINFO_RULE,
             id: "profile/split-debuginfo",
             tier: crate::finding::Tier::Foundational,

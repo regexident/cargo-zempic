@@ -2046,6 +2046,21 @@ fn codegen_units_fires_and_names_its_dependence_on_lto() {
 }
 
 #[test]
+fn incremental_is_quiet_on_the_dev_profile() {
+    let workspace = common::Fixture::new("incremental-enabled").materialize();
+    let mut config = analyze_config(&workspace, &[]);
+    config.profile = Some("dev".to_owned());
+
+    let report = cargo_zempic::analyze(&config).expect("the analysis succeeds");
+
+    assert!(
+        !finding_rules(&report.findings).contains(&"profile/incremental".to_owned()),
+        "`dev` sets incremental deliberately: {:?}",
+        finding_rules(&report.findings)
+    );
+}
+
+#[test]
 fn tier_two_rules_are_quiet_when_fully_optimized() {
     let findings = findings_for("fully-optimized", None);
     let rules = finding_rules(&findings);
@@ -2054,6 +2069,7 @@ fn tier_two_rules_are_quiet_when_fully_optimized() {
         "profile/opt-level:size",
         "profile/lto",
         "profile/codegen-units",
+        "profile/incremental",
     ] {
         assert!(
             !rules.contains(&absent.to_owned()),

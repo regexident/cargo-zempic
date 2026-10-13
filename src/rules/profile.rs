@@ -340,9 +340,60 @@ impl Rule for CodegenUnitsRule {
         )]
     }
 }
+
+/// Reports incremental compilation in a release-like profile.
+pub struct IncrementalRule;
+
+/// The instance registered for [`IncrementalRule`].
+pub const INCREMENTAL_RULE: IncrementalRule = IncrementalRule;
+
+impl Rule for IncrementalRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        if !profile_rules_apply(context) {
+            return Vec::new();
+        }
+
+        let profile = &context.resolution.profile;
+        if !profile.incremental.value || !is_release_like(profile) {
+            return Vec::new();
+        }
+
+        let metadata = registered("profile/incremental");
+
+        vec![build(
+            metadata,
+            None,
+            Some(Change {
+                current: "true".to_owned(),
+                recommended: "false".to_owned(),
+            }),
+            location_of(&profile.incremental),
+            "Incremental compilation is enabled in a release-like profile",
+            "Incremental compilation trades runtime speed for rebuild speed, which \
+             a shipped artifact does not need."
+                .to_owned(),
+            "Rebuilds are slower.",
+        )]
+    }
+}
+
 /// Whether an optimization level targets size, `"s"` or `"z"`.
 fn is_size_level(value: OptLevel) -> bool {
     matches!(value, OptLevel::Size | OptLevel::SizeNoVectorize)
+}
+
+/// Whether a profile roots at cargo's `release` built-in.
+///
+/// A profile is release-like when its name or any entry in its `inherits` chain
+/// names the `release` built-in, which is where cargo sets the shipped-artifact
+/// defaults.
+fn is_release_like(profile: &crate::profile::ResolvedProfile) -> bool {
+    std::iter::once(&profile.name)
+        .chain(profile.inherits_chain.iter())
+        .any(|name| {
+            crate::profile::BuiltinProfile::from_name(name)
+                == Some(crate::profile::BuiltinProfile::Release)
+        })
 }
 
 /// Render an `opt-level` value the way a manifest spells it.
