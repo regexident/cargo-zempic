@@ -568,6 +568,47 @@ fn analyze_config(workspace: &common::MaterializedWorkspace, only: &[&str]) -> A
     }
 }
 
+/// The findings a named fixture produces, optionally for a pinned target.
+///
+/// The analysis runs with the default configuration; `target` pins the triple
+/// when a rule's condition depends on it.
+fn findings_for(fixture: &str, target: Option<&str>) -> Vec<cargo_zempic::finding::Finding> {
+    let workspace = common::Fixture::new(fixture).materialize();
+    let mut config = analyze_config(&workspace, &[]);
+    config.target = target.map(str::to_owned);
+
+    cargo_zempic::analyze(&config)
+        .expect("the analysis succeeds")
+        .findings
+}
+
+/// The identifiers of `findings`, in report order.
+fn finding_rules(findings: &[cargo_zempic::finding::Finding]) -> Vec<String> {
+    findings
+        .iter()
+        .map(|finding| finding.rule.to_string())
+        .collect()
+}
+
+/// The single finding whose rule renders as `rule`.
+fn finding_for<'a>(
+    findings: &'a [cargo_zempic::finding::Finding],
+    rule: &str,
+) -> &'a cargo_zempic::finding::Finding {
+    let matches: Vec<&cargo_zempic::finding::Finding> = findings
+        .iter()
+        .filter(|finding| finding.rule.to_string() == rule)
+        .collect();
+
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected exactly one `{rule}`: {findings:?}"
+    );
+
+    matches[0]
+}
+
 /// Canonicalizes `path` so it can be compared with a path cargo reports, which
 /// resolves symlinks such as `/var` to `/private/var`.
 fn canonical(path: &camino::Utf8Path) -> camino::Utf8PathBuf {
@@ -882,13 +923,9 @@ fn config_discovery_merges_package_files_over_the_workspace_base() {
 }
 
 /// The analysis evaluates the rule registry against the resolved workspace.
-///
-/// `evaluate` runs each registry entry over the root manifest and the selected
-/// members; the registry is empty while no rule is registered, so this asserts
-/// the evaluation path returns a value rather than that it fires.
 #[test]
 fn analysis_of_a_workspace_evaluates_the_registry() {
-    let workspace = common::Fixture::new("multi-member").materialize();
+    let workspace = common::Fixture::new("bare-release").materialize();
     let config = analysis_config(&workspace);
 
     let resolution = resolve(&config).expect("resolution succeeds");
@@ -897,7 +934,14 @@ fn analysis_of_a_workspace_evaluates_the_registry() {
 
     let findings = cargo_zempic::rules::evaluate(&resolution, &root_manifest, &[]);
 
-    assert_eq!(findings.len(), 0, "an empty registry yields nothing");
+    // A bare release profile leaves `strip` at its cargo default, so the
+    // registry's `profile/strip` entry produces a finding.
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.rule.to_string() == "profile/strip"),
+        "the registry must be evaluated: {findings:?}"
+    );
 }
 
 /// The member manifests a rule reads exclude the workspace root's own.
@@ -948,7 +992,7 @@ fn an_unparseable_member_manifest_fails_the_analysis() {
 /// ran against and no findings.
 #[test]
 fn analyze_returns_an_empty_report_for_a_resolvable_workspace() {
-    let workspace = common::Fixture::new("multi-member").materialize();
+    let workspace = common::Fixture::new("fully-optimized").materialize();
     let config = analyze_config(&workspace, &[]);
 
     let report = cargo_zempic::analyze(&config).expect("the analysis succeeds");
@@ -1714,6 +1758,85 @@ fn size_figure_scanner_rejects_figures_and_accepts_counts() {
             common::size_figures(accepted).is_empty(),
             "`{accepted}` must be accepted, found: {:?}",
             common::size_figures(accepted)
+        );
+    }
+}
+
+// MARK: Tier 1 rules
+
+#[test]
+fn strip_fires_when_symbols_are_retained() {
+    use cargo_zempic::finding::{Confidence, Fixability, Magnitude, Severity, Tier};
+
+    let findings = findings_for("strip-none", None);
+    let strip = finding_for(&findings, "profile/strip");
+
+    assert_eq!(strip.tier, Tier::Foundational);
+    assert_eq!(strip.severity, Severity::High);
+    assert_eq!(strip.magnitude, Magnitude::Large);
+    assert_eq!(strip.fixability, Fixability::Safe);
+    assert_eq!(strip.confidence, Confidence::High);
+    assert_eq!(strip.package, None);
+    assert!(!strip.tradeoff.is_empty());
+    assert_eq!(
+        strip
+            .change
+            .as_ref()
+            .map(|change| change.recommended.as_str()),
+        Some("\"symbols\"")
+    );
+    assert!(strip.location.is_some(), "an explicit setting has a span");
+}
+
+#[test]
+fn strip_reports_unset_on_a_bare_profile() {
+    let findings = findings_for("bare-release", None);
+    let strip = finding_for(&findings, "profile/strip");
+
+    assert_eq!(
+        strip.change.as_ref().map(|change| change.current.as_str()),
+        Some("unset")
+    );
+    assert_eq!(
+        strip.location, None,
+        "a cargo default has no key to point at"
+    );
+}
+
+#[test]
+fn tier_one_symbol_rules_are_quiet_when_fully_optimized() {
+    let findings = findings_for("fully-optimized", None);
+    let rules = finding_rules(&findings);
+
+    for absent in [
+        "profile/strip",
+        "profile/debug-info",
+        "profile/split-debuginfo",
+    ] {
+        assert!(
+            !rules.contains(&absent.to_owned()),
+            "`{absent}` must not fire when fully optimized: {rules:?}"
+        );
+    }
+}
+
+#[test]
+fn rule_documentation_files_exist_for_every_registered_rule() {
+    let root = camino::Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let docs = root.join(cargo_zempic::rules::DOCUMENTATION_DIRECTORY);
+
+    for entry in cargo_zempic::rules::registry() {
+        let expected = docs.join(cargo_zempic::rules::documentation_path(&entry.rule_id()));
+
+        assert!(
+            expected.is_file(),
+            "rule `{}` has no documentation file at `{expected}`",
+            entry.id
+        );
+        assert!(
+            !entry.documentation.is_empty(),
+            "rule `{}` embeds no documentation",
+            entry.id
         );
     }
 }

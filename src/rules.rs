@@ -110,7 +110,17 @@ impl RuleMetadata {
 /// severity tests enumerate. Each entry's severity is looked up in
 /// [`severity_assignments`] rather than stored on the entry.
 pub fn registry() -> &'static [RuleMetadata] {
-    &[]
+    const REGISTRY: &[RuleMetadata] = &[RuleMetadata {
+        rule: &crate::rules::profile::STRIP_RULE,
+        id: "profile/strip",
+        tier: crate::finding::Tier::Foundational,
+        magnitude: crate::finding::Magnitude::Large,
+        fixability: crate::finding::Fixability::Safe,
+        summary: "Reporting a profile that retains symbols in the linked artifact",
+        documentation: include_str!("rules/docs/profile/strip.md"),
+    }];
+
+    REGISTRY
 }
 
 /// Evaluate every registered rule against `resolution` and return the findings.

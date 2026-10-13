@@ -247,7 +247,7 @@ fn rule_documentation_carries_no_size_figure() {
 
 #[test]
 fn gating_arguments_are_accepted() {
-    let workspace = common::Fixture::new("multi-member").materialize();
+    let workspace = common::Fixture::new("fully-optimized").materialize();
 
     binary()
         .args([
@@ -276,7 +276,7 @@ fn malformed_selector_exits_two_naming_the_value() {
 
 #[test]
 fn check_reports_that_there_are_no_findings() {
-    let workspace = common::Fixture::new("multi-member").materialize();
+    let workspace = common::Fixture::new("fully-optimized").materialize();
 
     let assert = binary()
         .args([
@@ -425,7 +425,7 @@ fn color_never_emits_no_escape_sequence() {
 
 #[test]
 fn configured_format_is_honored_and_overridden_by_the_argument() {
-    let workspace = common::Fixture::new("multi-member").materialize();
+    let workspace = common::Fixture::new("fully-optimized").materialize();
 
     std::fs::write(
         workspace.root().join("zempic.toml"),

@@ -1,0 +1,23 @@
+---
+source: tests/render.rs
+expression: document
+---
+cargo-zempic 0.0.1
+    workspace: [WORKSPACE_ROOT]  (1 members, 1 selected)
+      profile: release  (inherits: none)
+optimizing for: size
+       target: aarch64-apple-darwin
+
+TIER 1  FOUNDATIONAL                                                   1 finding
+
+  HIGH   large  profile/strip                    "none" -> "symbols"
+        effort: trivial   runtime cost: none   fix: safe
+        The symbol table and the strings it references are kept in the linked
+        artifact even though they are not needed to run it.
+        Tradeoff: Stripping removes function names from backtraces and profiler output.
+SUMMARY
+  1 finding: 1 high.  By magnitude: 1 large.
+  1 auto-fixable.
+
+  Magnitude is an ordinal judgement, not a measurement. zempic does not build
+  and does not read compiled artifacts, so it reports no sizes.

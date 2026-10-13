@@ -80,3 +80,8 @@ fn fully_optimized_markdown() {
         rendered("fully-optimized", Format::Markdown),
     );
 }
+
+#[test]
+fn strip_none_human() {
+    assert_snapshot("strip_none_human", rendered("strip-none", Format::Human));
+}
