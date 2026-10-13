@@ -1844,6 +1844,36 @@ fn debug_info_fires_and_accounts_for_strip() {
 }
 
 #[test]
+fn split_debuginfo_fires_only_on_an_apple_target() {
+    use cargo_zempic::finding::{Fixability, Magnitude, Severity, Tier};
+
+    let apple = findings_for("split-debuginfo-off", Some("aarch64-apple-darwin"));
+    let finding = finding_for(&apple, "profile/split-debuginfo");
+
+    assert_eq!(finding.tier, Tier::Foundational);
+    assert_eq!(finding.severity, Severity::Low);
+    assert_eq!(finding.magnitude, Magnitude::Small);
+    assert_eq!(finding.fixability, Fixability::Safe);
+    assert_eq!(
+        finding
+            .change
+            .as_ref()
+            .map(|change| change.recommended.as_str()),
+        Some("\"packed\"")
+    );
+
+    // On a non-Apple target the rule is quiet, because the setting has no effect
+    // there.
+    let linux = findings_for("split-debuginfo-off", Some("x86_64-unknown-linux-gnu"));
+
+    assert!(
+        !finding_rules(&linux).contains(&"profile/split-debuginfo".to_owned()),
+        "the rule must be quiet on a Linux target: {:?}",
+        finding_rules(&linux)
+    );
+}
+
+#[test]
 fn tier_one_symbol_rules_are_quiet_when_fully_optimized() {
     let findings = findings_for("fully-optimized", None);
     let rules = finding_rules(&findings);

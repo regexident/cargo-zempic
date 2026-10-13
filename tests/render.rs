@@ -93,3 +93,17 @@ fn debug_info_enabled_human() {
         rendered("debug-info-enabled", Format::Human),
     );
 }
+
+#[test]
+fn split_debuginfo_off_human() {
+    // The rule fires only on an Apple target, so the triple is pinned rather
+    // than taken from the host, which would differ between developers.
+    assert_snapshot(
+        "split_debuginfo_off_human",
+        rendered_for(
+            "split-debuginfo-off",
+            Format::Human,
+            Some("aarch64-apple-darwin"),
+        ),
+    );
+}

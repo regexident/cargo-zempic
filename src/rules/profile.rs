@@ -15,7 +15,7 @@
 
 use crate::finding::{Change, Confidence, Effort, Finding, Location, RuleId, RuntimeCost};
 use crate::manifest::KeySpan;
-use crate::profile::{DebugInfo, Provenance, Resolved, Strip};
+use crate::profile::{DebugInfo, Provenance, Resolved, SplitDebuginfo, Strip};
 use crate::rules::{Rule, RuleContext, RuleMetadata};
 
 /// Whether any selected package emits an artifact the profile governs.
@@ -121,6 +121,46 @@ fn debug_info_enabled(level: DebugInfo) -> bool {
     !matches!(level, DebugInfo::None)
 }
 
+/// Reports in-binary debug information on an Apple target.
+pub struct SplitDebuginfoRule;
+
+/// The instance registered for [`SplitDebuginfoRule`].
+pub const SPLIT_DEBUGINFO_RULE: SplitDebuginfoRule = SplitDebuginfoRule;
+
+impl Rule for SplitDebuginfoRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        if !profile_rules_apply(context) {
+            return Vec::new();
+        }
+
+        let profile = &context.resolution.profile;
+        if !crate::profile::is_apple_target(context.target_triple)
+            || !debug_info_enabled(profile.debug.value)
+            || profile.split_debuginfo.value != SplitDebuginfo::Off
+        {
+            return Vec::new();
+        }
+
+        let metadata = registered("profile/split-debuginfo");
+
+        vec![build(
+            metadata,
+            None,
+            Some(Change {
+                current: current_text(&profile.split_debuginfo, render_split_debuginfo),
+                recommended: "\"packed\"".to_owned(),
+            }),
+            location_of(&profile.split_debuginfo),
+            "Debug information is linked into the artifact",
+            "On this target debug information is left in the linked artifact. \
+             Splitting it into side files moves it out without discarding it."
+                .to_owned(),
+            "This recommendation is platform-specific and the split files must be \
+             kept beside the binary for a debugger to find them.",
+        )]
+    }
+}
+
 /// The registered metadata for `id`.
 ///
 /// # Panics
@@ -205,4 +245,9 @@ fn render_debug_info(value: DebugInfo) -> String {
         DebugInfo::Limited => "\"limited\"".to_owned(),
         DebugInfo::Full => "true".to_owned(),
     }
+}
+
+/// Render a `split-debuginfo` value the way a manifest spells it.
+fn render_split_debuginfo(value: SplitDebuginfo) -> String {
+    format!("\"{}\"", value.as_str())
 }

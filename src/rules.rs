@@ -129,6 +129,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             summary: "Reporting retained debug information in the linked artifact",
             documentation: include_str!("rules/docs/profile/debug-info.md"),
         },
+        RuleMetadata {
+            rule: &crate::rules::profile::SPLIT_DEBUGINFO_RULE,
+            id: "profile/split-debuginfo",
+            tier: crate::finding::Tier::Foundational,
+            magnitude: crate::finding::Magnitude::Small,
+            fixability: crate::finding::Fixability::Safe,
+            summary: "Reporting in-binary debug information on an Apple target",
+            documentation: include_str!("rules/docs/profile/split-debuginfo.md"),
+        },
     ];
 
     REGISTRY
