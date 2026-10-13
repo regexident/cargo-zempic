@@ -1,0 +1,23 @@
+---
+source: tests/render.rs
+expression: document
+---
+cargo-zempic 0.0.1
+    workspace: [WORKSPACE_ROOT]  (1 members, 1 selected)
+      profile: release  (inherits: none)
+optimizing for: size
+       target: aarch64-apple-darwin
+
+TIER 2  COMPILER                                                       1 finding
+
+  LOW    negligible profile/codegen-units            16 -> 1
+        effort: trivial   runtime cost: none   fix: consequential
+        A single code generation unit lets `profile/lto` optimize across the
+        whole crate; with several units, that optimization is limited.
+        Tradeoff: Compiles are slower; the setting is what unlocks link-time optimization.
+SUMMARY
+  1 finding: 1 low.  By magnitude: 1 negligible.
+  1 auto-fixable.
+
+  Magnitude is an ordinal judgement, not a measurement. zempic does not build
+  and does not read compiled artifacts, so it reports no sizes.

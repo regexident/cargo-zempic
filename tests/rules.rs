@@ -2007,12 +2007,57 @@ fn opt_level_fires_for_the_size_dimension() {
 }
 
 #[test]
+fn lto_fires_when_link_time_optimization_is_partial() {
+    use cargo_zempic::finding::{Fixability, Magnitude, Severity, Tier};
+
+    let findings = findings_for("lto-thin", None);
+    let finding = finding_for(&findings, "profile/lto");
+
+    assert_eq!(finding.tier, Tier::Compiler);
+    assert_eq!(finding.severity, Severity::Medium);
+    assert_eq!(finding.magnitude, Magnitude::Moderate);
+    assert_eq!(finding.fixability, Fixability::Consequential);
+    assert_eq!(
+        finding
+            .change
+            .as_ref()
+            .map(|change| change.recommended.as_str()),
+        Some("\"fat\"")
+    );
+}
+
+#[test]
+fn codegen_units_fires_and_names_its_dependence_on_lto() {
+    let findings = findings_for("codegen-units-many", None);
+    let finding = finding_for(&findings, "profile/codegen-units");
+
+    assert!(
+        finding.detail.contains("profile/lto"),
+        "the detail must name its dependence on `profile/lto`: {}",
+        finding.detail
+    );
+    assert_eq!(
+        finding
+            .change
+            .as_ref()
+            .map(|change| change.recommended.as_str()),
+        Some("1")
+    );
+}
+
+#[test]
 fn tier_two_rules_are_quiet_when_fully_optimized() {
     let findings = findings_for("fully-optimized", None);
     let rules = finding_rules(&findings);
 
-    assert!(
-        !rules.contains(&"profile/opt-level:size".to_owned()),
-        "`profile/opt-level:size` must not fire when fully optimized: {rules:?}"
-    );
+    for absent in [
+        "profile/opt-level:size",
+        "profile/lto",
+        "profile/codegen-units",
+    ] {
+        assert!(
+            !rules.contains(&absent.to_owned()),
+            "`{absent}` must not fire when fully optimized: {rules:?}"
+        );
+    }
 }

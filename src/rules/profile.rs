@@ -15,7 +15,7 @@
 
 use crate::finding::{Change, Confidence, Effort, Finding, Location, RuleId, RuntimeCost};
 use crate::manifest::KeySpan;
-use crate::profile::{DebugInfo, OptLevel, Provenance, Resolved, SplitDebuginfo, Strip};
+use crate::profile::{DebugInfo, Lto, OptLevel, Provenance, Resolved, SplitDebuginfo, Strip};
 use crate::rules::{Rule, RuleContext, RuleMetadata};
 
 /// Whether any selected package emits an artifact the profile governs.
@@ -268,6 +268,78 @@ impl Rule for OptLevelRule {
         vec![finding]
     }
 }
+
+/// Reports partial link-time optimization.
+pub struct LtoRule;
+
+/// The instance registered for [`LtoRule`].
+pub const LTO_RULE: LtoRule = LtoRule;
+
+impl Rule for LtoRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        if !profile_rules_apply(context) {
+            return Vec::new();
+        }
+
+        let lto = &context.resolution.profile.lto;
+        if lto.value == Lto::Fat {
+            return Vec::new();
+        }
+
+        let metadata = registered("profile/lto");
+
+        vec![build(
+            metadata,
+            None,
+            Some(Change {
+                current: current_text(lto, render_lto),
+                recommended: "\"fat\"".to_owned(),
+            }),
+            location_of(lto),
+            "Link-time optimization is partial or disabled",
+            "Optimizing across crate boundaries removes code a per-crate build must \
+             keep."
+                .to_owned(),
+            "Link time rises substantially.",
+        )]
+    }
+}
+
+/// Reports more than one code generation unit.
+pub struct CodegenUnitsRule;
+
+/// The instance registered for [`CodegenUnitsRule`].
+pub const CODEGEN_UNITS_RULE: CodegenUnitsRule = CodegenUnitsRule;
+
+impl Rule for CodegenUnitsRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        if !profile_rules_apply(context) {
+            return Vec::new();
+        }
+
+        let codegen_units = &context.resolution.profile.codegen_units;
+        if codegen_units.value <= 1 {
+            return Vec::new();
+        }
+
+        let metadata = registered("profile/codegen-units");
+
+        vec![build(
+            metadata,
+            None,
+            Some(Change {
+                current: current_text(codegen_units, |value| value.to_string()),
+                recommended: "1".to_owned(),
+            }),
+            location_of(codegen_units),
+            "The crate is split across several code generation units",
+            "A single code generation unit lets `profile/lto` optimize across the \
+             whole crate; with several units, that optimization is limited."
+                .to_owned(),
+            "Compiles are slower; the setting is what unlocks link-time optimization.",
+        )]
+    }
+}
 /// Whether an optimization level targets size, `"s"` or `"z"`.
 fn is_size_level(value: OptLevel) -> bool {
     matches!(value, OptLevel::Size | OptLevel::SizeNoVectorize)
@@ -282,6 +354,15 @@ fn render_opt_level(value: OptLevel) -> String {
         OptLevel::Three => "3".to_owned(),
         OptLevel::Size => "\"s\"".to_owned(),
         OptLevel::SizeNoVectorize => "\"z\"".to_owned(),
+    }
+}
+
+/// Render an `lto` value the way a manifest spells it.
+fn render_lto(value: Lto) -> String {
+    match value {
+        Lto::Off => "false".to_owned(),
+        Lto::Thin => "\"thin\"".to_owned(),
+        Lto::Fat => "\"fat\"".to_owned(),
     }
 }
 

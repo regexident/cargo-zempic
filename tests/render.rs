@@ -115,3 +115,16 @@ fn opt_level_speed_human() {
         rendered("opt-level-speed", Format::Human),
     );
 }
+
+#[test]
+fn lto_thin_human() {
+    assert_snapshot("lto_thin_human", rendered("lto-thin", Format::Human));
+}
+
+#[test]
+fn codegen_units_many_human() {
+    assert_snapshot(
+        "codegen_units_many_human",
+        rendered("codegen-units-many", Format::Human),
+    );
+}
