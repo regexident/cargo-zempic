@@ -1910,3 +1910,69 @@ fn rule_documentation_files_exist_for_every_registered_rule() {
         );
     }
 }
+
+// MARK: missing-config
+
+#[test]
+fn missing_config_fires_on_a_bare_profile_alongside_the_key_rules() {
+    use cargo_zempic::finding::{Fixability, Magnitude, Severity, Tier};
+
+    let findings = findings_for("bare-release", None);
+    let missing = finding_for(&findings, "profile/missing-config");
+
+    assert_eq!(missing.tier, Tier::Foundational);
+    assert_eq!(missing.severity, Severity::Medium);
+    assert_eq!(missing.magnitude, Magnitude::Moderate);
+    assert_eq!(missing.fixability, Fixability::ReportOnly);
+    assert_eq!(missing.change, None);
+    assert_eq!(
+        missing.location, None,
+        "a profile with no table has no location"
+    );
+    assert!(!missing.tradeoff.is_empty());
+
+    // The rule co-exists with the per-key rules rather than replacing them.
+    assert!(
+        finding_rules(&findings).contains(&"profile/strip".to_owned()),
+        "the per-key rules must still fire: {:?}",
+        finding_rules(&findings)
+    );
+}
+
+#[test]
+fn missing_config_is_quiet_when_a_setting_is_explicit() {
+    let findings = findings_for("fully-optimized", None);
+
+    assert!(
+        !finding_rules(&findings).contains(&"profile/missing-config".to_owned()),
+        "the rule must be quiet when a setting is explicit: {:?}",
+        finding_rules(&findings)
+    );
+}
+
+#[test]
+fn missing_config_is_quiet_for_an_inherited_profile() {
+    let workspace = common::Fixture::new("multi-member").materialize();
+
+    let root_manifest = concat!(
+        "[workspace]\n",
+        "members = [\"alpha\", \"beta\"]\n\n",
+        "[profile.parent]\n",
+        "inherits = \"release\"\n",
+        "strip = \"symbols\"\n\n",
+        "[profile.child]\n",
+        "inherits = \"parent\"\n",
+    );
+    std::fs::write(workspace.root().join("Cargo.toml"), root_manifest).unwrap();
+
+    let mut config = analyze_config(&workspace, &[]);
+    config.profile = Some("child".to_owned());
+    let report = cargo_zempic::analyze(&config).expect("the analysis succeeds");
+
+    // `child` inherits its settings, so it is not missing its configuration.
+    assert!(
+        !finding_rules(&report.findings).contains(&"profile/missing-config".to_owned()),
+        "an inherited profile is configured: {:?}",
+        finding_rules(&report.findings)
+    );
+}

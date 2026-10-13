@@ -130,6 +130,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             documentation: include_str!("rules/docs/profile/debug-info.md"),
         },
         RuleMetadata {
+            rule: &crate::rules::profile::MISSING_CONFIG_RULE,
+            id: "profile/missing-config",
+            tier: crate::finding::Tier::Foundational,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::ReportOnly,
+            summary: "Reporting a profile that sets nothing explicitly",
+            documentation: include_str!("rules/docs/profile/missing-config.md"),
+        },
+        RuleMetadata {
             rule: &crate::rules::profile::SPLIT_DEBUGINFO_RULE,
             id: "profile/split-debuginfo",
             tier: crate::finding::Tier::Foundational,

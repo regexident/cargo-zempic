@@ -161,6 +161,69 @@ impl Rule for SplitDebuginfoRule {
     }
 }
 
+/// Reports a profile that sets nothing explicitly.
+pub struct MissingConfigRule;
+
+/// The instance registered for [`MissingConfigRule`].
+pub const MISSING_CONFIG_RULE: MissingConfigRule = MissingConfigRule;
+
+impl Rule for MissingConfigRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        if !profile_rules_apply(context) {
+            return Vec::new();
+        }
+
+        // Every field is enumerated explicitly rather than reflected over, so
+        // adding a setting to `ResolvedProfile` without considering this rule
+        // fails to compile instead of silently changing the condition. An
+        // inherited setting counts as configured, because the parent declares
+        // it; only a value no manifest sets anywhere is absent.
+        let profile = &context.resolution.profile;
+        let configured = [
+            profile.opt_level.is_explicit() || is_inherited(&profile.opt_level),
+            profile.lto.is_explicit() || is_inherited(&profile.lto),
+            profile.strip.is_explicit() || is_inherited(&profile.strip),
+            profile.panic.is_explicit() || is_inherited(&profile.panic),
+            profile.debug.is_explicit() || is_inherited(&profile.debug),
+            profile.codegen_units.is_explicit() || is_inherited(&profile.codegen_units),
+            profile.incremental.is_explicit() || is_inherited(&profile.incremental),
+            profile.debug_assertions.is_explicit() || is_inherited(&profile.debug_assertions),
+            profile.overflow_checks.is_explicit() || is_inherited(&profile.overflow_checks),
+            profile.split_debuginfo.is_explicit() || is_inherited(&profile.split_debuginfo),
+        ];
+
+        if configured.iter().any(|set| *set) {
+            return Vec::new();
+        }
+
+        // The location is the profile table's own key when a table exists but
+        // sets nothing this crate reads, and absent when there is no table.
+        let location = profile_table_location(context, &profile.name);
+        let metadata = registered("profile/missing-config");
+
+        vec![build(
+            metadata,
+            None,
+            None,
+            location,
+            "The profile sets nothing explicitly",
+            "Every setting falls back to cargo's defaults, which favor compile time \
+             over a small artifact. The other findings in this report name the \
+             settings to set."
+                .to_owned(),
+            "There is nothing to lose by configuring the profile.",
+        )]
+    }
+}
+
+/// The key span of the analyzed profile's own table, when one exists.
+fn profile_table_location(context: &RuleContext<'_>, name: &str) -> Option<KeySpan> {
+    let tables = crate::profile::profile_tables(context.root_manifest).ok()?;
+
+    crate::profile::profile_table_for(&tables, name)
+        .and_then(|_| context.root_manifest.key_span(&format!("profile.{name}")))
+}
+
 /// The registered metadata for `id`.
 ///
 /// # Panics
@@ -225,6 +288,11 @@ fn location_of<T>(setting: &Resolved<T>) -> Option<KeySpan> {
         Provenance::Explicit { key, .. } | Provenance::Inherited { key, .. } => Some(key.clone()),
         Provenance::CargoDefault => None,
     }
+}
+
+/// Whether a setting's value was inherited from another profile.
+fn is_inherited<T>(setting: &Resolved<T>) -> bool {
+    matches!(setting.provenance, Provenance::Inherited { .. })
 }
 
 /// Render a `strip` value the way a manifest spells it.
