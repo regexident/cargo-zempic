@@ -108,6 +108,12 @@ pub enum Notice {
         /// The selector as written.
         selector: String,
     },
+    /// The panic-strategy rule was skipped because cargo rejects `panic` in the
+    /// analyzed profile.
+    SkippedPanicStrategy {
+        /// The profile named, which is `test` or `bench`.
+        profile: String,
+    },
 }
 
 impl Notice {
@@ -120,6 +126,9 @@ impl Notice {
             Notice::UndocumentedIgnore { selector } => {
                 format!("ignore `{selector}` records no reason")
             }
+            Notice::SkippedPanicStrategy { profile } => format!(
+                "the panic-strategy rule was skipped: cargo rejects `panic` in the `{profile}` profile"
+            ),
         }
     }
 }

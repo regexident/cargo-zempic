@@ -2099,3 +2099,100 @@ fn tier_two_rules_are_quiet_when_fully_optimized() {
         );
     }
 }
+
+// MARK: Tier 3 behavioral rules
+
+#[test]
+fn panic_abort_fires_when_unwinding_is_retained() {
+    use cargo_zempic::finding::{Fixability, Magnitude, Severity, Tier};
+
+    let findings = findings_for("panic-unwind", None);
+    let finding = finding_for(&findings, "profile/panic-abort");
+
+    assert_eq!(finding.tier, Tier::Behavioral);
+    assert_eq!(finding.severity, Severity::Low);
+    assert_eq!(finding.magnitude, Magnitude::Small);
+    assert_eq!(finding.fixability, Fixability::Consequential);
+    assert_eq!(
+        finding
+            .change
+            .as_ref()
+            .map(|change| change.recommended.as_str()),
+        Some("\"abort\"")
+    );
+    assert!(
+        finding.tradeoff.contains("catch_unwind"),
+        "the tradeoff must warn about `catch_unwind`: {}",
+        finding.tradeoff
+    );
+}
+
+#[test]
+fn panic_abort_is_skipped_with_a_notice_on_the_bench_profile() {
+    let workspace = common::Fixture::new("panic-unwind").materialize();
+    let mut config = analyze_config(&workspace, &[]);
+    config.profile = Some("bench".to_owned());
+
+    let report = cargo_zempic::analyze(&config).expect("the analysis succeeds");
+
+    assert!(
+        !finding_rules(&report.findings).contains(&"profile/panic-abort".to_owned()),
+        "the rule is skipped on `bench`: {:?}",
+        finding_rules(&report.findings)
+    );
+    assert!(
+        report.notices.iter().any(|notice| matches!(
+            notice,
+            cargo_zempic::report::Notice::SkippedPanicStrategy { profile } if profile == "bench"
+        )),
+        "the run must say the rule was skipped: {:?}",
+        report.notices
+    );
+}
+
+#[test]
+fn panic_abort_is_skipped_for_a_profile_inheriting_from_test() {
+    let workspace = common::Fixture::new("panic-unwind").materialize();
+
+    let root_manifest = concat!(
+        "[package]\n",
+        "name = \"panic-unwind\"\n",
+        "version = \"0.1.0\"\n",
+        "edition = \"2021\"\n\n",
+        "[[bin]]\n",
+        "name = \"panic-unwind\"\n",
+        "path = \"src/main.rs\"\n\n",
+        "[profile.custom]\n",
+        "inherits = \"test\"\n",
+    );
+    std::fs::write(workspace.root().join("Cargo.toml"), root_manifest).unwrap();
+
+    let mut config = analyze_config(&workspace, &[]);
+    config.profile = Some("custom".to_owned());
+    let report = cargo_zempic::analyze(&config).expect("the analysis succeeds");
+
+    assert!(
+        !finding_rules(&report.findings).contains(&"profile/panic-abort".to_owned()),
+        "a profile inheriting `test` is skipped: {:?}",
+        finding_rules(&report.findings)
+    );
+    assert!(
+        report.notices.iter().any(|notice| matches!(
+            notice,
+            cargo_zempic::report::Notice::SkippedPanicStrategy { .. }
+        )),
+        "the run must say the rule was skipped: {:?}",
+        report.notices
+    );
+}
+
+#[test]
+fn tier_three_rules_are_quiet_when_fully_optimized() {
+    let findings = findings_for("fully-optimized", None);
+    let rules = finding_rules(&findings);
+
+    assert!(
+        !rules.contains(&"profile/panic-abort".to_owned()),
+        "`profile/panic-abort` must not fire when fully optimized: {rules:?}"
+    );
+}

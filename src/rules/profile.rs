@@ -15,7 +15,9 @@
 
 use crate::finding::{Change, Confidence, Effort, Finding, Location, RuleId, RuntimeCost};
 use crate::manifest::KeySpan;
-use crate::profile::{DebugInfo, Lto, OptLevel, Provenance, Resolved, SplitDebuginfo, Strip};
+use crate::profile::{
+    DebugInfo, Lto, OptLevel, PanicStrategy, Provenance, Resolved, SplitDebuginfo, Strip,
+};
 use crate::rules::{Rule, RuleContext, RuleMetadata};
 
 /// Whether any selected package emits an artifact the profile governs.
@@ -466,6 +468,63 @@ fn render_lto(value: Lto) -> String {
         Lto::Off => "false".to_owned(),
         Lto::Thin => "\"thin\"".to_owned(),
         Lto::Fat => "\"fat\"".to_owned(),
+    }
+}
+
+/// Whether the panic setting is inert for the analyzed profile.
+///
+/// Cargo rejects `panic` in the `test` and `bench` profiles, so the profile's
+/// name or any entry in its `inherits` chain reaching either makes the setting
+/// inert. The rule and the notice that reports the skip share this predicate.
+pub fn panic_strategy_is_inert(profile: &crate::profile::ResolvedProfile) -> bool {
+    std::iter::once(&profile.name)
+        .chain(profile.inherits_chain.iter())
+        .any(|name| matches!(name.as_str(), "test" | "bench"))
+}
+
+/// Reports a profile that unwinds instead of aborting.
+pub struct PanicAbortRule;
+
+/// The instance registered for [`PanicAbortRule`].
+pub const PANIC_ABORT_RULE: PanicAbortRule = PanicAbortRule;
+
+impl Rule for PanicAbortRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        if !profile_rules_apply(context) {
+            return Vec::new();
+        }
+
+        let profile = &context.resolution.profile;
+        if panic_strategy_is_inert(profile) || profile.panic.value == PanicStrategy::Abort {
+            return Vec::new();
+        }
+
+        let metadata = registered("profile/panic-abort");
+
+        vec![build(
+            metadata,
+            None,
+            Some(Change {
+                current: current_text(&profile.panic, render_panic),
+                recommended: "\"abort\"".to_owned(),
+            }),
+            location_of(&profile.panic),
+            "The profile unwinds instead of aborting",
+            "Unwinding carries the machinery that walks the stack and runs \
+             destructors. Aborting on panic lets the compiler drop it."
+                .to_owned(),
+            "Aborting loses unwinding: a `catch_unwind` in the workspace or any \
+             dependency will no longer recover from a panic. The setting applies \
+             workspace-wide, because `panic` cannot be set per package.",
+        )]
+    }
+}
+
+/// Render a `panic` value the way a manifest spells it.
+fn render_panic(value: PanicStrategy) -> String {
+    match value {
+        PanicStrategy::Unwind => "\"unwind\"".to_owned(),
+        PanicStrategy::Abort => "\"abort\"".to_owned(),
     }
 }
 

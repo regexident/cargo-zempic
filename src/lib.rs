@@ -493,13 +493,34 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
     let findings = rules::evaluate(&resolution, &root_manifest, &member_manifests);
     let filtered = config::filter(findings, &effective_gates, config.today);
 
-    report::Report::new(
-        resolution,
-        filtered.findings,
-        Vec::new(),
-        filtered.notices,
-        settings,
-    )
+    let mut notices = filtered.notices;
+
+    // The rule cannot emit a notice itself, so the run reports the skip from the
+    // same predicate the rule uses, so the notice and the skip cannot disagree.
+    if rules::profile::panic_strategy_is_inert(&resolution.profile) {
+        notices.push(report::Notice::SkippedPanicStrategy {
+            profile: inert_profile_name(&resolution.profile),
+        });
+    }
+
+    report::Report::new(resolution, filtered.findings, Vec::new(), notices, settings)
+}
+
+/// The profile name the panic-strategy skip is reported under.
+///
+/// Names the analyzed profile's own name when it is `test` or `bench`, else the
+/// inherited profile in its chain that named one.
+fn inert_profile_name(profile: &profile::ResolvedProfile) -> String {
+    if matches!(profile.name.as_str(), "test" | "bench") {
+        return profile.name.clone();
+    }
+
+    profile
+        .inherits_chain
+        .iter()
+        .find(|name| matches!(name.as_str(), "test" | "bench"))
+        .cloned()
+        .unwrap_or_else(|| profile.name.clone())
 }
 
 /// Parses each selected member's manifest, excluding the workspace root's.

@@ -144,3 +144,11 @@ fn dependency_opt_level_human() {
         rendered("dependency-opt-level", Format::Human),
     );
 }
+
+#[test]
+fn panic_unwind_human() {
+    assert_snapshot(
+        "panic_unwind_human",
+        rendered("panic-unwind", Format::Human),
+    );
+}

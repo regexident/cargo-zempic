@@ -184,6 +184,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             documentation: include_str!("rules/docs/profile/dependency-opt-level.md"),
         },
         RuleMetadata {
+            rule: &crate::rules::profile::PANIC_ABORT_RULE,
+            id: "profile/panic-abort",
+            tier: crate::finding::Tier::Behavioral,
+            magnitude: crate::finding::Magnitude::Small,
+            fixability: crate::finding::Fixability::Consequential,
+            summary: "Reporting a profile that unwinds instead of aborting",
+            documentation: include_str!("rules/docs/profile/panic-abort.md"),
+        },
+        RuleMetadata {
             rule: &crate::rules::profile::SPLIT_DEBUGINFO_RULE,
             id: "profile/split-debuginfo",
             tier: crate::finding::Tier::Foundational,
