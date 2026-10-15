@@ -2219,3 +2219,54 @@ fn tier_three_rules_are_quiet_when_fully_optimized() {
         );
     }
 }
+
+// MARK: workspace/ignored-member-profile
+
+#[test]
+fn ignored_member_profile_fires_per_offending_member() {
+    use cargo_zempic::finding::{Fixability, Magnitude, Severity, Tier};
+
+    let findings = findings_for("member-profile-table", None);
+    let finding = finding_for(&findings, "workspace/ignored-member-profile");
+
+    assert_eq!(finding.tier, Tier::Foundational);
+    assert_eq!(finding.severity, Severity::High);
+    assert_eq!(finding.magnitude, Magnitude::None);
+    assert_eq!(finding.fixability, Fixability::Safe);
+    assert_eq!(finding.change, None);
+    assert_eq!(finding.package.as_deref(), Some("member"));
+
+    let location = finding
+        .location
+        .as_ref()
+        .expect("the finding has a location");
+    assert!(
+        location.span.file.as_str().ends_with("member/Cargo.toml"),
+        "the location must point at the member's manifest: {}",
+        location.span.file
+    );
+}
+
+#[test]
+fn ignored_member_profile_ignores_the_root_table() {
+    // `fully-optimized` declares a root `[profile.release]` table and has no
+    // member table, so the rule must stay quiet.
+    let findings = findings_for("fully-optimized", None);
+
+    assert!(
+        !finding_rules(&findings).contains(&"workspace/ignored-member-profile".to_owned()),
+        "the root table is honored and must not fire: {:?}",
+        finding_rules(&findings)
+    );
+}
+
+#[test]
+fn ignored_member_profile_is_quiet_without_a_member_table() {
+    let findings = findings_for("multi-member", None);
+
+    assert!(
+        !finding_rules(&findings).contains(&"workspace/ignored-member-profile".to_owned()),
+        "a workspace with no member table must not fire: {:?}",
+        finding_rules(&findings)
+    );
+}

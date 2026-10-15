@@ -211,6 +211,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             documentation: include_str!("rules/docs/profile/overflow-checks.md"),
         },
         RuleMetadata {
+            rule: &crate::rules::profile::IGNORED_MEMBER_PROFILE_RULE,
+            id: "workspace/ignored-member-profile",
+            tier: crate::finding::Tier::Foundational,
+            magnitude: crate::finding::Magnitude::None,
+            fixability: crate::finding::Fixability::Safe,
+            summary: "Reporting a member manifest whose profile table cargo ignores",
+            documentation: include_str!("rules/docs/workspace/ignored-member-profile.md"),
+        },
+        RuleMetadata {
             rule: &crate::rules::profile::SPLIT_DEBUGINFO_RULE,
             id: "profile/split-debuginfo",
             tier: crate::finding::Tier::Foundational,

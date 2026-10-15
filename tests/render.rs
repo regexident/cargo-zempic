@@ -168,3 +168,11 @@ fn overflow_checks_enabled_human() {
         rendered("overflow-checks-enabled", Format::Human),
     );
 }
+
+#[test]
+fn member_profile_table_human() {
+    assert_snapshot(
+        "member_profile_table_human",
+        rendered("member-profile-table", Format::Human),
+    );
+}

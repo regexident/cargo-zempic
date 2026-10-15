@@ -600,6 +600,52 @@ fn render_panic(value: PanicStrategy) -> String {
     }
 }
 
+/// Reports a member manifest whose profile table cargo ignores.
+///
+/// This rule is not subject to the linked-artifact gate: a member producing only
+/// an `rlib` still has an inert profile table, and the finding is about the
+/// manifest rather than about the artifact.
+pub struct IgnoredMemberProfileRule;
+
+/// The instance registered for [`IgnoredMemberProfileRule`].
+pub const IGNORED_MEMBER_PROFILE_RULE: IgnoredMemberProfileRule = IgnoredMemberProfileRule;
+
+impl Rule for IgnoredMemberProfileRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        let metadata = registered("workspace/ignored-member-profile");
+        let mut findings = Vec::new();
+
+        for (name, manifest) in context.member_manifests {
+            // The presence of a `profile` key is the whole condition; parsing
+            // the settings would validate a table this rule does not read.
+            if manifest.document().as_table().get("profile").is_none() {
+                continue;
+            }
+
+            let location = manifest.key_span("profile");
+
+            let mut finding = build(
+                metadata,
+                Some(name.clone()),
+                None,
+                location,
+                "A member manifest declares a profile table cargo ignores",
+                "Cargo honors a `[profile.*]` table only in the workspace root \
+                 manifest, so this member's table has no effect. Moving the \
+                 settings to the root makes them take effect."
+                    .to_owned(),
+                "The table is silently inert, so removing it changes nothing \
+                 about the artifact.",
+            );
+            finding.magnitude = crate::finding::Magnitude::None;
+
+            findings.push(finding);
+        }
+
+        findings
+    }
+}
+
 /// The registered metadata for `id`.
 ///
 /// # Panics
