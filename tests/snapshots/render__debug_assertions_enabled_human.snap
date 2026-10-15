@@ -1,0 +1,24 @@
+---
+source: tests/render.rs
+expression: document
+---
+cargo-zempic 0.0.1
+    workspace: [WORKSPACE_ROOT]  (1 members, 1 selected)
+      profile: release  (inherits: none)
+optimizing for: size
+       target: aarch64-apple-darwin
+
+TIER 3  BEHAVIORAL                                                     1 finding
+
+  MEDIUM small  profile/debug-assertions         true -> false
+        effort: trivial   runtime cost: none   fix: safe
+        Debug assertions and internal consistency checks are compiled into the
+        shipped artifact.
+        Tradeoff: The removed checks catch bugs; an invariant they guard goes unnoticed in
+        the release build.
+SUMMARY
+  1 finding: 1 medium.  By magnitude: 1 small.
+  1 auto-fixable.
+
+  Magnitude is an ordinal judgement, not a measurement. zempic does not build
+  and does not read compiled artifacts, so it reports no sizes.

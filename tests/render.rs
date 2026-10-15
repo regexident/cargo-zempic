@@ -152,3 +152,19 @@ fn panic_unwind_human() {
         rendered("panic-unwind", Format::Human),
     );
 }
+
+#[test]
+fn debug_assertions_enabled_human() {
+    assert_snapshot(
+        "debug_assertions_enabled_human",
+        rendered("debug-assertions-enabled", Format::Human),
+    );
+}
+
+#[test]
+fn overflow_checks_enabled_human() {
+    assert_snapshot(
+        "overflow_checks_enabled_human",
+        rendered("overflow-checks-enabled", Format::Human),
+    );
+}

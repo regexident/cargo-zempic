@@ -520,6 +520,78 @@ impl Rule for PanicAbortRule {
     }
 }
 
+/// Reports debug assertions enabled in a release-like profile.
+pub struct DebugAssertionsRule;
+
+/// The instance registered for [`DebugAssertionsRule`].
+pub const DEBUG_ASSERTIONS_RULE: DebugAssertionsRule = DebugAssertionsRule;
+
+impl Rule for DebugAssertionsRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        if !profile_rules_apply(context) {
+            return Vec::new();
+        }
+
+        let profile = &context.resolution.profile;
+        if !profile.debug_assertions.value || !is_release_like(profile) {
+            return Vec::new();
+        }
+
+        let metadata = registered("profile/debug-assertions");
+
+        vec![build(
+            metadata,
+            None,
+            Some(Change {
+                current: "true".to_owned(),
+                recommended: "false".to_owned(),
+            }),
+            location_of(&profile.debug_assertions),
+            "Debug assertions are enabled in a release-like profile",
+            "Debug assertions and internal consistency checks are compiled into \
+             the shipped artifact."
+                .to_owned(),
+            "The removed checks catch bugs; an invariant they guard goes \
+             unnoticed in the release build.",
+        )]
+    }
+}
+
+/// Reports overflow checks enabled in a release-like profile.
+pub struct OverflowChecksRule;
+
+/// The instance registered for [`OverflowChecksRule`].
+pub const OVERFLOW_CHECKS_RULE: OverflowChecksRule = OverflowChecksRule;
+
+impl Rule for OverflowChecksRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        if !profile_rules_apply(context) {
+            return Vec::new();
+        }
+
+        let profile = &context.resolution.profile;
+        if !profile.overflow_checks.value || !is_release_like(profile) {
+            return Vec::new();
+        }
+
+        let metadata = registered("profile/overflow-checks");
+
+        vec![build(
+            metadata,
+            None,
+            Some(Change {
+                current: "true".to_owned(),
+                recommended: "false".to_owned(),
+            }),
+            location_of(&profile.overflow_checks),
+            "Overflow checks are enabled in a release-like profile",
+            "Integer arithmetic is checked for overflow in the shipped artifact.".to_owned(),
+            "With the checks removed, arithmetic overflow no longer panics; it \
+             wraps and continues with a wrong value.",
+        )]
+    }
+}
+
 /// Render a `panic` value the way a manifest spells it.
 fn render_panic(value: PanicStrategy) -> String {
     match value {

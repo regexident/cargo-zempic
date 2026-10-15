@@ -2187,12 +2187,35 @@ fn panic_abort_is_skipped_for_a_profile_inheriting_from_test() {
 }
 
 #[test]
+fn behavioral_checks_are_quiet_on_the_dev_profile() {
+    let workspace = common::Fixture::new("debug-assertions-enabled").materialize();
+    let mut config = analyze_config(&workspace, &[]);
+    config.profile = Some("dev".to_owned());
+
+    let report = cargo_zempic::analyze(&config).expect("the analysis succeeds");
+    let rules = finding_rules(&report.findings);
+
+    for absent in ["profile/debug-assertions", "profile/overflow-checks"] {
+        assert!(
+            !rules.contains(&absent.to_owned()),
+            "`{absent}` must be quiet on `dev`: {rules:?}"
+        );
+    }
+}
+
+#[test]
 fn tier_three_rules_are_quiet_when_fully_optimized() {
     let findings = findings_for("fully-optimized", None);
     let rules = finding_rules(&findings);
 
-    assert!(
-        !rules.contains(&"profile/panic-abort".to_owned()),
-        "`profile/panic-abort` must not fire when fully optimized: {rules:?}"
-    );
+    for absent in [
+        "profile/panic-abort",
+        "profile/debug-assertions",
+        "profile/overflow-checks",
+    ] {
+        assert!(
+            !rules.contains(&absent.to_owned()),
+            "`{absent}` must not fire when fully optimized: {rules:?}"
+        );
+    }
 }
