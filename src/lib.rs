@@ -5,6 +5,7 @@
 //! downstream callers can work with typed results rather than rendered text.
 //! Rendering and exit-code mapping live in the binary target.
 
+pub mod cargo_config;
 pub mod cli;
 pub mod config;
 pub mod dimension;
@@ -255,6 +256,8 @@ pub struct AnalysisConfig {
     /// The current date, supplied by the caller so ignore expiry is
     /// deterministic.
     pub today: config::CivilDate,
+    /// The process state the cargo configuration chain is resolved against.
+    pub environment: cargo_config::CargoEnvironment,
 }
 
 /// A selected package and the classification of its targets.
@@ -576,7 +579,10 @@ pub(crate) fn metadata_query(
 
 #[cfg(test)]
 mod tests {
-    use super::{AnalysisConfig, dimension::Dimension, metadata_query, workspace};
+    use super::{
+        AnalysisConfig, cargo_config::CargoEnvironment, dimension::Dimension, metadata_query,
+        workspace,
+    };
 
     #[test]
     fn metadata_query_filters_by_the_resolved_target_triple() {
@@ -592,6 +598,7 @@ mod tests {
             quiet: false,
             gates: crate::config::Gates::default(),
             today: crate::config::CivilDate::today(),
+            environment: CargoEnvironment::default(),
         };
 
         let query = metadata_query(&config, "aarch64-unknown-linux-gnu");

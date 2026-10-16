@@ -256,6 +256,7 @@ impl From<&AnalysisArgs> for AnalysisConfig {
                 include_advisory: !args.no_include_advisory,
             },
             today: crate::config::CivilDate::today(),
+            environment: crate::cargo_config::CargoEnvironment::from_process(),
         }
     }
 }
@@ -427,6 +428,7 @@ mod tests {
                     include_advisory: false,
                 },
                 today: crate::config::CivilDate::today(),
+                environment: crate::cargo_config::CargoEnvironment::from_process(),
             }
         );
     }

@@ -541,6 +541,7 @@ fn analysis_config(workspace: &common::MaterializedWorkspace) -> AnalysisConfig 
         quiet: false,
         gates: cargo_zempic::config::Gates::default(),
         today: cargo_zempic::config::CivilDate::today(),
+        environment: cargo_zempic::cargo_config::CargoEnvironment::sealed(workspace.root()),
     }
 }
 
@@ -565,6 +566,7 @@ fn analyze_config(workspace: &common::MaterializedWorkspace, only: &[&str]) -> A
             include_advisory: true,
         },
         today: cargo_zempic::config::CivilDate::parse("2026-10-04").unwrap(),
+        environment: cargo_zempic::cargo_config::CargoEnvironment::sealed(workspace.root()),
     }
 }
 
