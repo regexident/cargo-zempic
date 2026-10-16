@@ -218,6 +218,24 @@ pub enum ZempicError {
         /// The threshold name that was not recognized.
         found: String,
     },
+
+    /// Reading a cargo configuration file from disk failed.
+    #[error("failed to read cargo configuration `{path}`: {source}")]
+    CargoConfigRead {
+        /// Path of the cargo configuration file that could not be read.
+        path: camino::Utf8PathBuf,
+        /// Underlying I/O failure.
+        source: std::io::Error,
+    },
+
+    /// Parsing a cargo configuration file failed.
+    #[error("failed to parse cargo configuration `{path}`: {source}")]
+    CargoConfigParse {
+        /// Path of the cargo configuration file that could not be parsed.
+        path: camino::Utf8PathBuf,
+        /// Underlying TOML failure.
+        source: toml_edit::TomlError,
+    },
 }
 
 /// The inputs a resolution runs from.
