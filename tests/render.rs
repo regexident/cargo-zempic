@@ -176,3 +176,49 @@ fn member_profile_table_human() {
         rendered("member-profile-table", Format::Human),
     );
 }
+
+#[test]
+fn bare_release_human() {
+    assert_snapshot(
+        "bare_release_human",
+        rendered("bare-release", Format::Human),
+    );
+}
+
+#[test]
+fn bare_release_json() {
+    assert_snapshot("bare_release_json", rendered("bare-release", Format::Json));
+}
+
+#[test]
+fn bare_release_markdown() {
+    assert_snapshot(
+        "bare_release_markdown",
+        rendered("bare-release", Format::Markdown),
+    );
+}
+
+#[test]
+fn snapshots_carry_no_absolute_path() {
+    let repository_root = camino::Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let snapshots = repository_root.join("tests/snapshots");
+
+    let entries = std::fs::read_dir(&snapshots).expect("the snapshot directory exists");
+
+    for entry in entries.flatten() {
+        let path = camino::Utf8PathBuf::from_path_buf(entry.path()).expect("paths are UTF-8");
+        let text = std::fs::read_to_string(&path).expect("the snapshot is readable");
+
+        for forbidden in ["/tmp/", "/var/folders/"] {
+            assert!(
+                !text.contains(forbidden),
+                "snapshot `{path}` embeds `{forbidden}`"
+            );
+        }
+
+        assert!(
+            !text.contains(repository_root.as_str()),
+            "snapshot `{path}` embeds the repository root"
+        );
+    }
+}
