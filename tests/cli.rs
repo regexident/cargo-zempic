@@ -169,54 +169,58 @@ fn unknown_package_exits_two() {
 
 #[test]
 fn output_contains_no_size_figure() {
-    let workspace = common::Fixture::new("multi-member").materialize();
-    let manifest = workspace.manifest_path();
+    // `bare-release` fires the most rules, so it is where a §2 violation in a
+    // rule's prose would appear; `multi-member` covers the empty-report path.
+    for fixture in ["bare-release", "multi-member"] {
+        let workspace = common::Fixture::new(fixture).materialize();
+        let manifest = workspace.manifest_path();
 
-    // Every renderer's output is scanned: the human form, the JSON document and
-    // the Markdown document all carry the numbers policy.
-    for (label, args) in [
-        (
-            "human",
-            vec![
-                "check",
-                "--manifest-path",
-                manifest.as_str(),
-                "--format",
+        // Every renderer's output is scanned: the human form, the JSON document
+        // and the Markdown document all carry the numbers policy.
+        for (label, args) in [
+            (
                 "human",
-                "--color",
-                "never",
-            ],
-        ),
-        (
-            "json",
-            vec![
-                "check",
-                "--manifest-path",
-                manifest.as_str(),
-                "--format",
+                vec![
+                    "check",
+                    "--manifest-path",
+                    manifest.as_str(),
+                    "--format",
+                    "human",
+                    "--color",
+                    "never",
+                ],
+            ),
+            (
                 "json",
-            ],
-        ),
-        (
-            "markdown",
-            vec![
-                "check",
-                "--manifest-path",
-                manifest.as_str(),
-                "--format",
+                vec![
+                    "check",
+                    "--manifest-path",
+                    manifest.as_str(),
+                    "--format",
+                    "json",
+                ],
+            ),
+            (
                 "markdown",
-            ],
-        ),
-    ] {
-        let output = binary().args(&args).output().expect("the command runs");
+                vec![
+                    "check",
+                    "--manifest-path",
+                    manifest.as_str(),
+                    "--format",
+                    "markdown",
+                ],
+            ),
+        ] {
+            let output = binary().args(&args).output().expect("the command runs");
 
-        assert!(output.status.success(), "{label} run failed: {output:?}");
+            assert!(output.status.success(), "{label} run failed: {output:?}");
 
-        let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
-        let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+            let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+            let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
 
-        common::assert_no_size_figures(&format!("{label} stdout"), &stdout);
-        common::assert_no_size_figures(&format!("{label} stderr"), &stderr);
+            common::assert_no_size_figures(&format!("{label} stdout"), &stdout);
+            common::assert_no_size_figures(&format!("{label} stderr"), &stderr);
+        }
     }
 }
 

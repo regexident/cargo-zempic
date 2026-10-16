@@ -2270,3 +2270,92 @@ fn ignored_member_profile_is_quiet_without_a_member_table() {
         finding_rules(&findings)
     );
 }
+
+// MARK: Registry totality
+
+#[test]
+fn registry_covers_every_profile_and_workspace_assignment() {
+    use cargo_zempic::finding::{RuleId, Selector};
+
+    let mut registered: Vec<String> = cargo_zempic::rules::registry()
+        .iter()
+        .map(|entry| entry.id.to_owned())
+        .collect();
+    registered.sort();
+
+    let expected = [
+        "profile/codegen-units",
+        "profile/debug-assertions",
+        "profile/debug-info",
+        "profile/dependency-opt-level",
+        "profile/incremental",
+        "profile/lto",
+        "profile/missing-config",
+        "profile/opt-level:size",
+        "profile/overflow-checks",
+        "profile/panic-abort",
+        "profile/split-debuginfo",
+        "profile/strip",
+        "workspace/ignored-member-profile",
+    ];
+
+    assert_eq!(registered, expected, "the registry must hold exactly these");
+
+    // Every `profile/*` and `workspace/*` severity assignment has a registry
+    // entry, so an assignment cannot be left unregistered.
+    for (text, _) in cargo_zempic::rules::severity_assignments() {
+        let selector = Selector::parse(text).expect("the assignment is a selector");
+        let category = text.split(['/', ':']).next().unwrap_or(text);
+
+        if category != "profile" && category != "workspace" {
+            continue;
+        }
+
+        // A family selector such as `profile` names a category, not a rule;
+        // only a concrete identifier needs a registry entry.
+        let Ok(id) = RuleId::parse(text) else {
+            continue;
+        };
+
+        assert!(
+            cargo_zempic::rules::metadata_for(&id).is_some(),
+            "assignment `{text}` has no registered rule"
+        );
+        let _ = selector;
+    }
+}
+
+#[test]
+fn every_registered_rule_has_a_distinct_identifier() {
+    let mut ids: Vec<&str> = cargo_zempic::rules::registry()
+        .iter()
+        .map(|entry| entry.id)
+        .collect();
+    let total = ids.len();
+    ids.sort();
+    ids.dedup();
+
+    assert_eq!(ids.len(), total, "no identifier may repeat");
+}
+
+#[test]
+fn every_registered_rule_carries_a_tradeoff_on_every_finding_it_emits() {
+    for fixture in RULE_FIXTURES {
+        let findings = findings_for(fixture, None);
+
+        for finding in &findings {
+            assert!(
+                !finding.tradeoff.trim().is_empty(),
+                "`{fixture}` produced a finding with no tradeoff: {finding:?}"
+            );
+            assert!(
+                !finding.title.trim().is_empty(),
+                "`{fixture}` produced a finding with no title: {finding:?}"
+            );
+            assert!(
+                !finding.detail.trim().is_empty(),
+                "`{fixture}` produced a finding with no detail: {finding:?}"
+            );
+        }
+    }
+}
