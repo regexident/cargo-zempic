@@ -939,7 +939,15 @@ fn analysis_of_a_workspace_evaluates_the_registry() {
     let root_manifest =
         ManifestDocument::load(&workspace.root().join("Cargo.toml")).expect("the root manifest");
 
-    let findings = cargo_zempic::rules::evaluate(&resolution, &root_manifest, &[], &[]);
+    let metadata =
+        cargo_zempic::workspace::load_metadata(&cargo_zempic::workspace::MetadataQuery {
+            manifest_path: Some(workspace.manifest_path()),
+            target: Some(resolution.target_triple.clone()),
+            features: FeatureSelection::default(),
+        })
+        .expect("the metadata loads");
+
+    let findings = cargo_zempic::rules::evaluate(&resolution, &metadata, &root_manifest, &[], &[]);
 
     // A bare release profile leaves `strip` at its cargo default, so the
     // registry's `profile/strip` entry produces a finding.

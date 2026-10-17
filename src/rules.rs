@@ -18,6 +18,9 @@ pub struct RuleContext<'a> {
     pub dimension: crate::dimension::Dimension,
     /// The workspace resolved for the run.
     pub resolution: &'a crate::Resolution,
+    /// The `cargo metadata` output the workspace was resolved from, filtered to
+    /// the resolved target platform.
+    pub metadata: &'a cargo_metadata::Metadata,
     /// The parsed workspace root manifest.
     pub root_manifest: &'a crate::manifest::ManifestDocument,
     /// The parsed manifests of the selected members, excluding the root
@@ -305,6 +308,7 @@ pub fn registry() -> &'static [RuleMetadata] {
 /// workspace.
 pub fn evaluate(
     resolution: &crate::Resolution,
+    metadata: &cargo_metadata::Metadata,
     root_manifest: &crate::manifest::ManifestDocument,
     member_manifests: &[(String, crate::manifest::ManifestDocument)],
     cargo_configs: &[(String, crate::cargo_config::ResolvedRustflags)],
@@ -315,6 +319,7 @@ pub fn evaluate(
         let context = RuleContext {
             dimension: *dimension,
             resolution,
+            metadata,
             root_manifest,
             member_manifests,
             target_triple: &resolution.target_triple,
@@ -560,6 +565,7 @@ mod tests {
     fn evaluation_deduplicates_a_dimension_neutral_rule() {
         let resolution = probe_resolution();
         let manifest = probe_manifest();
+        let metadata = probe_metadata();
 
         // The neutral rule's identifier carries no dimension, so evaluating it
         // once per selected dimension must yield a single finding.
@@ -570,6 +576,7 @@ mod tests {
                 let context = RuleContext {
                     dimension: *dimension,
                     resolution: &resolution,
+                    metadata: &metadata,
                     root_manifest: &manifest,
                     member_manifests: &[],
                     target_triple: &resolution.target_triple,
@@ -593,6 +600,7 @@ mod tests {
     fn evaluation_keeps_one_finding_per_dimensioned_identifier() {
         let resolution = probe_resolution();
         let manifest = probe_manifest();
+        let metadata = probe_metadata();
 
         let mut findings = Vec::new();
 
@@ -600,6 +608,7 @@ mod tests {
             let context = RuleContext {
                 dimension: *dimension,
                 resolution: &resolution,
+                metadata: &metadata,
                 root_manifest: &manifest,
                 member_manifests: &[],
                 target_triple: &resolution.target_triple,
@@ -644,6 +653,14 @@ mod tests {
                 crate::dimension::Dimension::Size,
             ],
         }
+    }
+
+    /// An empty `cargo metadata` document for building an evaluation context.
+    fn probe_metadata() -> cargo_metadata::Metadata {
+        serde_json::from_str(
+            r#"{"packages":[],"workspace_members":[],"resolve":null,"workspace_root":"/probe","target_directory":"/probe/target","version":1}"#,
+        )
+        .expect("the probe metadata parses")
     }
 
     /// A parsed manifest for building an evaluation context.

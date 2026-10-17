@@ -352,7 +352,7 @@ struct WorkspaceScope {
 /// metadata` fails, the selection names an unknown member, or the workspace
 /// root manifest cannot be read or parsed.
 pub fn resolve(config: &AnalysisConfig) -> Result<Resolution> {
-    let scope = scope(config)?;
+    let (scope, _metadata) = scope(config)?;
     let root_manifest = manifest::ManifestDocument::load(&scope.workspace_root.join("Cargo.toml"))?;
 
     finish(
@@ -368,7 +368,10 @@ pub fn resolve(config: &AnalysisConfig) -> Result<Resolution> {
 /// Performs the host-triple resolution, metadata load and package selection
 /// that precede profile resolution, so a caller may read the configuration
 /// before naming the profile.
-fn scope(config: &AnalysisConfig) -> Result<WorkspaceScope> {
+///
+/// Returns the metadata it read beside the scope so the rules can evaluate the
+/// graph without loading it twice.
+fn scope(config: &AnalysisConfig) -> Result<(WorkspaceScope, cargo_metadata::Metadata)> {
     let target_triple = match &config.target {
         Some(target) => target.clone(),
         None => workspace::host_target_triple()?,
@@ -388,12 +391,14 @@ fn scope(config: &AnalysisConfig) -> Result<WorkspaceScope> {
         })
         .collect();
 
-    Ok(WorkspaceScope {
+    let workspace_scope = WorkspaceScope {
         workspace_root,
         member_count,
         selected,
         target_triple,
-    })
+    };
+
+    Ok((workspace_scope, metadata))
 }
 
 /// Resolves `profile_name` over `root_manifest` into a [`Resolution`].
@@ -450,7 +455,7 @@ fn finish(
 /// cannot be read or does not validate, or when a produced finding carries no
 /// tradeoff.
 pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
-    let workspace_scope = scope(config)?;
+    let (workspace_scope, metadata) = scope(config)?;
 
     let package_directories: Vec<camino::Utf8PathBuf> = workspace_scope
         .selected
@@ -514,6 +519,7 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
     let cargo_configs = package_rustflags(&resolution, &config.environment)?;
     let findings = rules::evaluate(
         &resolution,
+        &metadata,
         &root_manifest,
         &member_manifests,
         &cargo_configs,
