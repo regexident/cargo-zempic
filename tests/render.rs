@@ -200,6 +200,30 @@ fn bare_release_markdown() {
 }
 
 #[test]
+fn link_dead_code_human() {
+    assert_snapshot(
+        "link_dead_code_human",
+        rendered_for(
+            "link-dead-code",
+            Format::Human,
+            Some("x86_64-unknown-linux-gnu"),
+        ),
+    );
+}
+
+#[test]
+fn rustflags_shadowed_human() {
+    assert_snapshot(
+        "rustflags_shadowed_human",
+        rendered_for(
+            "rustflags-shadowed",
+            Format::Human,
+            Some("x86_64-unknown-linux-gnu"),
+        ),
+    );
+}
+
+#[test]
 fn snapshots_carry_no_absolute_path() {
     let repository_root = camino::Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let snapshots = repository_root.join("tests/snapshots");
