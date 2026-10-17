@@ -656,6 +656,118 @@ pub fn resolve_for_package(
     Ok(resolve(&documents, environment, target_triple))
 }
 
+/// The name and optional `=value` suffix of one `-C`/`--codegen` flag,
+/// split at the first `=`.
+fn split_codegen_value(value: &str) -> (&str, Option<&str>) {
+    match value.split_once('=') {
+        Some((name, suffix)) => (name, Some(suffix)),
+        None => (value, None),
+    }
+}
+
+/// Resolve whether a `-C`/`--codegen` flag named `name` is enabled, given the
+/// flag's own name and optional boolean suffix, or [`None`] when `value`
+/// does not name `name` at all.
+fn codegen_flag_state(value: &str, name: &str) -> Option<bool> {
+    let (value_name, suffix) = split_codegen_value(value);
+
+    if value_name != name {
+        return None;
+    }
+
+    match suffix {
+        None => Some(true),
+        Some("yes" | "y" | "on" | "true") => Some(true),
+        Some("no" | "n" | "off" | "false") => Some(false),
+        Some(_) => None,
+    }
+}
+
+/// Whether the rustc codegen flag `name` is enabled anywhere in `flags`,
+/// recognizing every form rustc and cargo accept: the two-element
+/// `-C`/`--codegen` forms, their one-element `-C<name>`/`--codegen=<name>`
+/// equivalents, and a `=yes`/`=y`/`=on`/`=true` or `=no`/`=n`/`=off`/`=false`
+/// suffix on the name in any of them. A bare flag with no suffix at all
+/// counts as enabled, matching cargo's own boolean-flag convention.
+pub fn flag_enabled(flags: &[String], name: &str) -> bool {
+    let mut index = 0;
+
+    while index < flags.len() {
+        let current = flags[index].as_str();
+
+        if current == "-C" || current == "--codegen" {
+            if let Some(next) = flags.get(index + 1) {
+                if let Some(state) = codegen_flag_state(next, name) {
+                    return state;
+                }
+            }
+
+            index += 2;
+            continue;
+        }
+
+        let matched = current
+            .strip_prefix("-C")
+            .or_else(|| current.strip_prefix("--codegen="))
+            .and_then(|value| codegen_flag_state(value, name));
+
+        if let Some(state) = matched {
+            return state;
+        }
+
+        index += 1;
+    }
+
+    false
+}
+
+/// Push the value of a `-C link-arg=<value>` or `-C link-args=<value>` flag
+/// onto `results`, splitting a plural `link-args` value on ASCII whitespace
+/// into multiple values while leaving a singular `link-arg` value whole.
+fn push_link_argument(results: &mut Vec<String>, name: &str, value: &str) {
+    match name {
+        "link-arg" => results.push(value.to_owned()),
+        "link-args" => results.extend(value.split_ascii_whitespace().map(str::to_owned)),
+        _ => {}
+    }
+}
+
+/// Collect the values of every `-C link-arg=<value>` and `-C
+/// link-args=<value>` flag in `flags`, in every form rustc and cargo accept.
+pub fn link_arguments(flags: &[String]) -> Vec<String> {
+    let mut results = Vec::new();
+    let mut index = 0;
+
+    while index < flags.len() {
+        let current = flags[index].as_str();
+
+        if current == "-C" || current == "--codegen" {
+            if let Some(next) = flags.get(index + 1) {
+                if let Some((name, value)) = next.split_once('=') {
+                    push_link_argument(&mut results, name, value);
+                }
+            }
+
+            index += 2;
+            continue;
+        }
+
+        let rest = current
+            .strip_prefix("-C")
+            .or_else(|| current.strip_prefix("--codegen="));
+
+        if let Some(rest) = rest {
+            if let Some((name, value)) = rest.split_once('=') {
+                push_link_argument(&mut results, name, value);
+            }
+        }
+
+        index += 1;
+    }
+
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use super::CargoEnvironment;
@@ -1128,4 +1240,32 @@ mod tests {
         assert!(!resolved.cfg_tables_unevaluated);
     }
 
+    #[test]
+    fn flag_enabled_recognizes_every_codegen_form() {
+        use super::flag_enabled;
+
+        let name = "link-dead-code";
+
+        assert!(flag_enabled(
+            &["-C".to_owned(), "link-dead-code".to_owned()],
+            name
+        ));
+        assert!(flag_enabled(&["-Clink-dead-code".to_owned()], name));
+        assert!(flag_enabled(
+            &["--codegen".to_owned(), "link-dead-code".to_owned()],
+            name
+        ));
+        assert!(flag_enabled(
+            &["-C".to_owned(), "link-dead-code=yes".to_owned()],
+            name
+        ));
+        assert!(!flag_enabled(
+            &["-C".to_owned(), "link-dead-code=no".to_owned()],
+            name
+        ));
+        assert!(!flag_enabled(
+            &["-C".to_owned(), "link-dead-codex".to_owned()],
+            name
+        ));
+    }
 }
