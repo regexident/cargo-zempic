@@ -274,12 +274,15 @@ pub fn registry() -> &'static [RuleMetadata] {
 ///
 /// The registry is evaluated once per selected dimension, in dimension order,
 /// and the results are deduplicated by the whole finding identity — the rule
-/// identifier, the package and the location — keeping the first occurrence. A
-/// dimension-neutral rule that reports the same package and location under
-/// every dimension therefore yields one finding however many dimensions are
-/// selected; one that reports several distinct locations, such as one per
-/// offending workspace member, yields one finding per distinct location
-/// instead of collapsing them into one. A dimensioned rule yields one finding
+/// identifier, the package, the location and the detail text — keeping the
+/// first occurrence. A dimension-neutral rule that reports the same package,
+/// location and detail under every dimension therefore yields one finding
+/// however many dimensions are selected; one that reports several distinct
+/// locations, such as one per offending workspace member, yields one finding
+/// per distinct location instead of collapsing them into one. Two findings of
+/// one rule that differ only in their detail are both kept, because a
+/// workspace-level rule may report several distinct subjects with no package
+/// or location to tell them apart. A dimensioned rule yields one finding
 /// per dimension that produces it, because its identifier itself differs
 /// across dimensions.
 ///
@@ -313,13 +316,24 @@ pub fn evaluate(
         }
     }
 
-    let mut kept: Vec<(RuleId, Option<String>, Option<crate::finding::Location>)> = Vec::new();
+    deduplicate(findings)
+}
+
+/// Keep the first finding of each identity, preserving input order.
+fn deduplicate(mut findings: Vec<crate::finding::Finding>) -> Vec<crate::finding::Finding> {
+    let mut kept: Vec<(
+        RuleId,
+        Option<String>,
+        Option<crate::finding::Location>,
+        String,
+    )> = Vec::new();
 
     findings.retain(|finding| {
         let key = (
             finding.rule.clone(),
             finding.package.clone(),
             finding.location.clone(),
+            finding.detail.clone(),
         );
 
         if kept.contains(&key) {
@@ -446,7 +460,8 @@ pub fn documentation_path(id: &RuleId) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Rule, RuleContext, documentation_path, registry, severity_assignments, severity_of,
+        Rule, RuleContext, deduplicate, documentation_path, registry, severity_assignments,
+        severity_of,
     };
     use crate::finding::{
         Confidence, Effort, Finding, Fixability, Magnitude, RuleId, RuntimeCost, Selector,
@@ -494,6 +509,41 @@ mod tests {
             tradeoff: "cost".to_owned(),
             references: Vec::new(),
         }
+    }
+
+    /// A finding of the neutral probe rule carrying the given `detail`.
+    fn detail_probe_finding(detail: &str) -> Finding {
+        Finding {
+            detail: detail.to_owned(),
+            title: "probe".to_owned(),
+            tradeoff: "none".to_owned(),
+            ..probe_finding("probe/neutral")
+        }
+    }
+
+    #[test]
+    fn deduplication_keeps_findings_that_differ_only_in_detail() {
+        let kept = deduplicate(vec![
+            detail_probe_finding("first"),
+            detail_probe_finding("second"),
+        ]);
+
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].detail, "first");
+        assert_eq!(kept[1].detail, "second");
+    }
+
+    #[test]
+    fn deduplication_collapses_findings_with_an_identical_identity() {
+        let kept = deduplicate(vec![
+            detail_probe_finding("same"),
+            detail_probe_finding("same"),
+            detail_probe_finding("other"),
+        ]);
+
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].detail, "same");
+        assert_eq!(kept[1].detail, "other");
     }
 
     #[test]
