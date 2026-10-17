@@ -1,0 +1,17 @@
+[workspace]
+members = ["alpha", "beta"]
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+strip = "symbols"
+panic = "abort"
+codegen-units = 1
+incremental = false
+debug = false
+debug-assertions = false
+overflow-checks = false
+split-debuginfo = "packed"
+
+[profile.release.package."*"]
+opt-level = "z"

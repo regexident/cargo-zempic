@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 14] = [
+const RULE_FIXTURES: [&str; 15] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -119,6 +119,7 @@ const RULE_FIXTURES: [&str; 14] = [
     "debug-assertions-enabled",
     "overflow-checks-enabled",
     "member-profile-table",
+    "member-profile-tables",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2284,6 +2285,84 @@ fn ignored_member_profile_fires_per_offending_member() {
         location.span.file.as_str().ends_with("member/Cargo.toml"),
         "the location must point at the member's manifest: {}",
         location.span.file
+    );
+}
+
+#[test]
+fn ignored_member_profile_fires_for_every_offending_member() {
+    let findings = findings_for("member-profile-tables", None);
+
+    let matches: Vec<&cargo_zempic::finding::Finding> = findings
+        .iter()
+        .filter(|finding| finding.rule.to_string() == "workspace/ignored-member-profile")
+        .collect();
+
+    assert_eq!(
+        matches.len(),
+        2,
+        "each offending member must produce its own finding: {findings:?}"
+    );
+
+    let packages: std::collections::BTreeSet<Option<&str>> = matches
+        .iter()
+        .map(|finding| finding.package.as_deref())
+        .collect();
+
+    assert_eq!(
+        packages,
+        std::collections::BTreeSet::from([Some("alpha"), Some("beta")]),
+        "both members must be named: {matches:?}"
+    );
+
+    let mut files: Vec<&str> = matches
+        .iter()
+        .map(|finding| {
+            finding
+                .location
+                .as_ref()
+                .expect("each finding points at its member's manifest")
+                .span
+                .file
+                .as_str()
+        })
+        .collect();
+    files.sort_unstable();
+
+    assert_eq!(files.len(), 2);
+    assert_ne!(
+        files[0], files[1],
+        "the two findings must point at distinct locations: {files:?}"
+    );
+    assert!(
+        files[0].ends_with("alpha/Cargo.toml"),
+        "the first location must name alpha's manifest: {files:?}"
+    );
+    assert!(
+        files[1].ends_with("beta/Cargo.toml"),
+        "the second location must name beta's manifest: {files:?}"
+    );
+}
+
+#[test]
+fn a_dimension_neutral_rule_yields_one_finding_per_run() {
+    let workspace = common::Fixture::new("member-profile-table").materialize();
+    let mut config = analyze_config(&workspace, &[]);
+    config.dimensions = vec![Dimension::Size, Dimension::Size];
+
+    let findings = cargo_zempic::analyze(&config)
+        .expect("the analysis succeeds")
+        .findings;
+
+    let matches: Vec<&cargo_zempic::finding::Finding> = findings
+        .iter()
+        .filter(|finding| finding.rule.to_string() == "workspace/ignored-member-profile")
+        .collect();
+
+    assert_eq!(
+        matches.len(),
+        1,
+        "a dimension-neutral rule must collapse to one finding across repeated \
+         dimensions: {findings:?}"
     );
 }
 

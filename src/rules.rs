@@ -245,10 +245,15 @@ pub fn registry() -> &'static [RuleMetadata] {
 /// Evaluate every registered rule against `resolution` and return the findings.
 ///
 /// The registry is evaluated once per selected dimension, in dimension order,
-/// and the results are deduplicated by [`RuleId`], keeping the first occurrence.
-/// A dimension-neutral rule therefore yields one finding however many dimensions
-/// are selected, while a dimensioned rule yields one finding per dimension that
-/// produces it.
+/// and the results are deduplicated by the whole finding identity — the rule
+/// identifier, the package and the location — keeping the first occurrence. A
+/// dimension-neutral rule that reports the same package and location under
+/// every dimension therefore yields one finding however many dimensions are
+/// selected; one that reports several distinct locations, such as one per
+/// offending workspace member, yields one finding per distinct location
+/// instead of collapsing them into one. A dimensioned rule yields one finding
+/// per dimension that produces it, because its identifier itself differs
+/// across dimensions.
 ///
 /// The order of the returned findings is the direction order of the dimensions
 /// and the registry; the findings are not sorted here, because
@@ -280,9 +285,23 @@ pub fn evaluate(
         }
     }
 
-    let mut seen: std::collections::BTreeSet<RuleId> = std::collections::BTreeSet::new();
+    let mut kept: Vec<(RuleId, Option<String>, Option<crate::finding::Location>)> = Vec::new();
 
-    findings.retain(|finding| seen.insert(finding.rule.clone()));
+    findings.retain(|finding| {
+        let key = (
+            finding.rule.clone(),
+            finding.package.clone(),
+            finding.location.clone(),
+        );
+
+        if kept.contains(&key) {
+            return false;
+        }
+
+        kept.push(key);
+
+        true
+    });
 
     findings
 }
