@@ -36,37 +36,65 @@ fn selector_parser() -> clap::builder::ValueParser {
 
 /// Builds the parser for `--format`.
 ///
-/// Parsing at argument-parsing time rejects an unrecognized format before
-/// `cargo metadata` runs, with the offending value named.
+/// The accepted names come from [`Format`](crate::report::Format)'s own
+/// variants, so `--help` lists them and an unrecognized name fails with
+/// clap's own diagnostic rather than a hand-written message.
 fn format_parser() -> clap::builder::ValueParser {
-    clap::builder::ValueParser::new(|name: &str| {
-        crate::report::Format::from_name(name)
-            .ok_or_else(|| format!("`{name}` is not a format; expected human, json or markdown"))
+    clap::builder::PossibleValuesParser::new(
+        [
+            crate::report::Format::Human,
+            crate::report::Format::Json,
+            crate::report::Format::Markdown,
+        ]
+        .map(|format| format.as_str()),
+    )
+    .map(|name| {
+        crate::report::Format::from_name(&name).expect("the name was restricted to a known format")
     })
+    .into()
 }
 
 /// Builds the parser for `--fail-on`.
 ///
-/// Parsing at argument-parsing time rejects an unrecognized threshold before
-/// `cargo metadata` runs, with the offending value named.
+/// The accepted names come from [`FailOn`](crate::report::FailOn)'s own
+/// variants, so `--help` lists them and an unrecognized name fails with
+/// clap's own diagnostic rather than a hand-written message.
 fn fail_on_parser() -> clap::builder::ValueParser {
-    clap::builder::ValueParser::new(|name: &str| {
-        crate::report::FailOn::from_name(name).ok_or_else(|| {
-            format!("`{name}` is not a threshold; expected never, low, medium or high")
-        })
+    clap::builder::PossibleValuesParser::new(
+        [
+            crate::report::FailOn::Never,
+            crate::report::FailOn::Low,
+            crate::report::FailOn::Medium,
+            crate::report::FailOn::High,
+        ]
+        .map(|fail_on| fail_on.as_str()),
+    )
+    .map(|name| {
+        crate::report::FailOn::from_name(&name)
+            .expect("the name was restricted to a known threshold")
     })
+    .into()
 }
 
 /// Builds the parser for `--color`.
 ///
-/// Parsing at argument-parsing time rejects an unrecognized choice before
-/// `cargo metadata` runs, with the offending value named.
+/// The accepted names come from [`ColorChoice`](crate::report::ColorChoice)'s
+/// own variants, so `--help` lists them and an unrecognized name fails with
+/// clap's own diagnostic rather than a hand-written message.
 fn color_parser() -> clap::builder::ValueParser {
-    clap::builder::ValueParser::new(|name: &str| {
-        crate::report::ColorChoice::from_name(name).ok_or_else(|| {
-            format!("`{name}` is not a color choice; expected auto, always or never")
-        })
+    clap::builder::PossibleValuesParser::new(
+        [
+            crate::report::ColorChoice::Auto,
+            crate::report::ColorChoice::Always,
+            crate::report::ColorChoice::Never,
+        ]
+        .map(|choice| choice.as_str()),
+    )
+    .map(|name| {
+        crate::report::ColorChoice::from_name(&name)
+            .expect("the name was restricted to a known color choice")
     })
+    .into()
 }
 
 /// The parsed command line, root of the argument grammar.
