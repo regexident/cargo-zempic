@@ -359,6 +359,303 @@ pub fn discover(
     Ok(chain)
 }
 
+/// An environment variable cargo consults for rustflags ahead of any
+/// configuration file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvironmentVariable {
+    /// `RUSTFLAGS`, whitespace-separated.
+    Rustflags,
+    /// `CARGO_ENCODED_RUSTFLAGS`, separated by the unit separator `\x1f`.
+    EncodedRustflags,
+}
+
+impl EnvironmentVariable {
+    /// The variable's name as cargo and the shell know it.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Rustflags => "RUSTFLAGS",
+            Self::EncodedRustflags => "CARGO_ENCODED_RUSTFLAGS",
+        }
+    }
+}
+
+/// Which of cargo's three rustflags ranks supplied the flags cargo actually
+/// applies, or that none of them did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RustflagsSource {
+    /// Rank one: a `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` environment
+    /// variable, present even when its value is empty.
+    Environment {
+        /// Which of the two variables supplied the value.
+        variable: EnvironmentVariable,
+    },
+    /// Rank two: the matching `target.<triple>.rustflags` array, concatenated
+    /// with every `target.'cfg(...)'.rustflags` array found in the chain,
+    /// regardless of whether the predicate inside `cfg(...)` would actually
+    /// match the host cargo is building for.
+    TargetTables,
+    /// Rank three: the `build.rustflags` array.
+    BuildTable,
+    /// No rank in the chain set any rustflags at all.
+    Unset,
+}
+
+/// One `rustflags` array found in one chain file, carrying the span of the
+/// key that declares it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RustflagsEntry {
+    /// Location of the key declaring this array.
+    pub key: crate::manifest::KeySpan,
+    /// The array's string elements, in source order.
+    pub flags: Vec<String>,
+}
+
+/// The rustflags cargo applies after resolving its three-rank precedence over
+/// a configuration chain, together with every entry that rank shadowed.
+///
+/// Only flag membership in [`flags`](Self::flags) is relied upon anywhere
+/// downstream; the concatenation order of [`live`](Self::live)'s entries is a
+/// readability choice, not a contract any caller may depend on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedRustflags {
+    /// Which rank supplied [`flags`](Self::flags).
+    pub source: RustflagsSource,
+    /// The rustflags cargo actually applies.
+    pub flags: Vec<String>,
+    /// The entries contributing to [`flags`](Self::flags); empty when
+    /// [`source`](Self::source) is [`RustflagsSource::Environment`] or
+    /// [`RustflagsSource::Unset`], since neither reads a chain file.
+    pub live: Vec<RustflagsEntry>,
+    /// Every present entry of a rank strictly below the live source, in
+    /// chain order.
+    pub shadowed: Vec<RustflagsEntry>,
+    /// Whether a `target.'cfg(...)'.rustflags` table was found while
+    /// collecting rank two, regardless of which rank ultimately won.
+    ///
+    /// This crate has no cfg evaluator, so such a table counts as live
+    /// whether or not its predicate would actually match; a rule relying on
+    /// a resolution carrying this flag must cap its confidence accordingly.
+    pub cfg_tables_unevaluated: bool,
+}
+
+/// One `rustflags` array found while collecting a single rank from the
+/// configuration chain.
+struct CollectedEntry {
+    entry: RustflagsEntry,
+}
+
+/// Read the `rustflags` array under `table`, if any, as a list of its string
+/// elements.
+fn rustflags_array(table: &toml_edit::Table, key: &str) -> Option<Vec<String>> {
+    let item = table.get(key)?;
+    let array = item.as_array()?;
+
+    Some(
+        array
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_owned))
+            .collect(),
+    )
+}
+
+/// Collect the `build.rustflags` entry from `document`, if present.
+fn collect_build_entry(document: &CargoConfigDocument) -> Option<CollectedEntry> {
+    let build_table = document.document().as_table().get("build")?.as_table()?;
+    let flags = rustflags_array(build_table, "rustflags")?;
+    let key = document.key_span("build.rustflags")?;
+
+    Some(CollectedEntry {
+        entry: RustflagsEntry { key, flags },
+    })
+}
+
+/// Collect every rank-two entry from `document`: the `target.<triple>`
+/// table matching `target_triple` exactly, and every `target.'cfg(...)'`
+/// table, in the order the `[target]` table lists them.
+///
+/// Returns the entries alongside whether any cfg table among them carried a
+/// `rustflags` key, since that fact must be recorded even when the table
+/// ultimately contributes nothing to the winning rank.
+fn collect_target_entries(
+    document: &CargoConfigDocument,
+    target_triple: &str,
+) -> (Vec<CollectedEntry>, bool) {
+    let mut entries = Vec::new();
+    let mut cfg_table_seen = false;
+
+    let Some(target_table) = document
+        .document()
+        .as_table()
+        .get("target")
+        .and_then(|item| item.as_table())
+    else {
+        return (entries, cfg_table_seen);
+    };
+
+    for (key_name, item) in target_table.iter() {
+        let Some(nested_table) = item.as_table() else {
+            continue;
+        };
+
+        let is_matching_triple = key_name == target_triple;
+        let is_cfg_table = key_name.starts_with("cfg(");
+
+        if !is_matching_triple && !is_cfg_table {
+            continue;
+        }
+
+        let Some(flags) = rustflags_array(nested_table, "rustflags") else {
+            continue;
+        };
+
+        if is_cfg_table {
+            cfg_table_seen = true;
+        }
+
+        let dotted_key = format!("target.'{key_name}'.rustflags");
+        let Some(key) = document.key_span(&dotted_key) else {
+            continue;
+        };
+
+        entries.push(CollectedEntry {
+            entry: RustflagsEntry { key, flags },
+        });
+    }
+
+    (entries, cfg_table_seen)
+}
+
+/// Resolve which rustflags source cargo uses from the `documents` chain, the
+/// process `environment`, and the `target_triple` cargo is building for.
+///
+/// Evaluates cargo's precedence in strict rank order — the environment
+/// variables first, then every matching `target` table in the chain, then
+/// every `build.rustflags` table — stopping at the first rank that is
+/// present anywhere in the chain. A rank below the one that wins is recorded
+/// in [`ResolvedRustflags::shadowed`] purely so a rule can point at the
+/// configuration cargo silently ignores; it never contributes to
+/// [`ResolvedRustflags::flags`].
+pub fn resolve(
+    documents: &[CargoConfigDocument],
+    environment: &CargoEnvironment,
+    target_triple: &str,
+) -> ResolvedRustflags {
+    let mut target_entries = Vec::new();
+    let mut cfg_tables_unevaluated = false;
+
+    for document in documents {
+        let (entries, cfg_table_seen) = collect_target_entries(document, target_triple);
+        target_entries.extend(entries);
+        cfg_tables_unevaluated |= cfg_table_seen;
+    }
+
+    let build_entries: Vec<CollectedEntry> =
+        documents.iter().filter_map(collect_build_entry).collect();
+
+    let shadowed_configuration = || {
+        target_entries
+            .iter()
+            .chain(build_entries.iter())
+            .map(|collected| collected.entry.clone())
+            .collect::<Vec<_>>()
+    };
+
+    if let Some(value) = &environment.encoded_rustflags {
+        return ResolvedRustflags {
+            source: RustflagsSource::Environment {
+                variable: EnvironmentVariable::EncodedRustflags,
+            },
+            flags: value
+                .split('\u{1f}')
+                .filter(|segment| !segment.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            live: Vec::new(),
+            shadowed: shadowed_configuration(),
+            cfg_tables_unevaluated,
+        };
+    }
+
+    if let Some(value) = &environment.rustflags {
+        return ResolvedRustflags {
+            source: RustflagsSource::Environment {
+                variable: EnvironmentVariable::Rustflags,
+            },
+            flags: value.split_ascii_whitespace().map(str::to_owned).collect(),
+            live: Vec::new(),
+            shadowed: shadowed_configuration(),
+            cfg_tables_unevaluated,
+        };
+    }
+
+    if !target_entries.is_empty() {
+        let live: Vec<RustflagsEntry> = target_entries
+            .into_iter()
+            .map(|collected| collected.entry)
+            .collect();
+        let flags = live
+            .iter()
+            .flat_map(|entry| entry.flags.iter().cloned())
+            .collect();
+        let shadowed = build_entries
+            .into_iter()
+            .map(|collected| collected.entry)
+            .collect();
+
+        return ResolvedRustflags {
+            source: RustflagsSource::TargetTables,
+            flags,
+            live,
+            shadowed,
+            cfg_tables_unevaluated,
+        };
+    }
+
+    if !build_entries.is_empty() {
+        let live: Vec<RustflagsEntry> = build_entries
+            .into_iter()
+            .map(|collected| collected.entry)
+            .collect();
+        let flags = live
+            .iter()
+            .flat_map(|entry| entry.flags.iter().cloned())
+            .collect();
+
+        return ResolvedRustflags {
+            source: RustflagsSource::BuildTable,
+            flags,
+            live,
+            shadowed: Vec::new(),
+            cfg_tables_unevaluated,
+        };
+    }
+
+    ResolvedRustflags {
+        source: RustflagsSource::Unset,
+        flags: Vec::new(),
+        live: Vec::new(),
+        shadowed: Vec::new(),
+        cfg_tables_unevaluated,
+    }
+}
+
+/// Discover the configuration chain above `package_directory` and resolve
+/// which rustflags source cargo uses for `target_triple`.
+///
+/// # Errors
+///
+/// Returns whatever [`discover`] returns for a `config.toml` that exists but
+/// cannot be read or parsed.
+pub fn resolve_for_package(
+    package_directory: &camino::Utf8Path,
+    environment: &CargoEnvironment,
+    target_triple: &str,
+) -> crate::Result<ResolvedRustflags> {
+    let documents = discover(package_directory, environment)?;
+
+    Ok(resolve(&documents, environment, target_triple))
+}
+
 #[cfg(test)]
 mod tests {
     use super::CargoEnvironment;
@@ -637,4 +934,198 @@ mod tests {
         std::os::windows::fs::symlink_dir(target.as_std_path(), link.as_std_path())
             .expect("symlink fixture must be creatable");
     }
+
+    #[test]
+    fn build_table_alone_is_live() {
+        use super::{CargoConfigDocument, RustflagsSource, resolve};
+
+        let path = Utf8Path::new("/probe/.cargo/config.toml");
+        let text = "[build]\nrustflags = [\"-C\", \"opt-level=z\"]\n";
+        let document = CargoConfigDocument::parse(path, text).unwrap();
+        let environment = CargoEnvironment::default();
+
+        let resolved = resolve(&[document], &environment, "x86_64-unknown-linux-gnu");
+
+        assert_eq!(resolved.source, RustflagsSource::BuildTable);
+        assert_eq!(
+            resolved.flags,
+            vec!["-C".to_owned(), "opt-level=z".to_owned()]
+        );
+        assert_eq!(resolved.live.len(), 1);
+        assert!(resolved.shadowed.is_empty());
+        assert!(!resolved.cfg_tables_unevaluated);
+    }
+
+    #[test]
+    fn target_table_alone_is_live() {
+        use super::{CargoConfigDocument, RustflagsSource, resolve};
+
+        let path = Utf8Path::new("/probe/.cargo/config.toml");
+        let text =
+            "[target.x86_64-unknown-linux-gnu]\nrustflags = [\"-C\", \"target-cpu=native\"]\n";
+        let document = CargoConfigDocument::parse(path, text).unwrap();
+        let environment = CargoEnvironment::default();
+
+        let resolved = resolve(&[document], &environment, "x86_64-unknown-linux-gnu");
+
+        assert_eq!(resolved.source, RustflagsSource::TargetTables);
+        assert_eq!(
+            resolved.flags,
+            vec!["-C".to_owned(), "target-cpu=native".to_owned()]
+        );
+    }
+
+    #[test]
+    fn environment_alone_is_live() {
+        use super::{EnvironmentVariable, RustflagsSource, resolve};
+
+        let environment = CargoEnvironment {
+            rustflags: Some("-C a".to_owned()),
+            encoded_rustflags: None,
+            cargo_home: None,
+            chain_ceiling: None,
+        };
+
+        let resolved = resolve(&[], &environment, "x86_64-unknown-linux-gnu");
+
+        assert_eq!(
+            resolved.source,
+            RustflagsSource::Environment {
+                variable: EnvironmentVariable::Rustflags
+            }
+        );
+        assert_eq!(resolved.flags, vec!["-C".to_owned(), "a".to_owned()]);
+        assert!(resolved.shadowed.is_empty());
+    }
+
+    #[test]
+    fn no_source_resolves_to_unset() {
+        use super::{RustflagsSource, resolve};
+
+        let environment = CargoEnvironment::default();
+
+        let resolved = resolve(&[], &environment, "x86_64-unknown-linux-gnu");
+
+        assert_eq!(resolved.source, RustflagsSource::Unset);
+        assert!(resolved.flags.is_empty());
+        assert!(resolved.live.is_empty());
+        assert!(resolved.shadowed.is_empty());
+        assert!(!resolved.cfg_tables_unevaluated);
+    }
+
+    #[test]
+    fn target_table_shadows_the_build_table() {
+        use super::{CargoConfigDocument, RustflagsSource, resolve};
+
+        let path = Utf8Path::new("/probe/.cargo/config.toml");
+        let text = "[build]\nrustflags = [\"-C\", \"a\"]\n\n[target.x86_64-unknown-linux-gnu]\nrustflags = [\"-C\", \"b\"]\n";
+        let document = CargoConfigDocument::parse(path, text).unwrap();
+        let environment = CargoEnvironment::default();
+
+        let resolved = resolve(
+            &[CargoConfigDocument::parse(path, text).unwrap()],
+            &environment,
+            "x86_64-unknown-linux-gnu",
+        );
+
+        assert_eq!(resolved.source, RustflagsSource::TargetTables);
+        assert_eq!(resolved.flags, vec!["-C".to_owned(), "b".to_owned()]);
+        assert_eq!(resolved.shadowed.len(), 1);
+        assert_eq!(resolved.shadowed[0].key.key, "build.rustflags");
+
+        let resolved_foreign_triple = resolve(&[document], &environment, "aarch64-apple-darwin");
+
+        assert_eq!(resolved_foreign_triple.source, RustflagsSource::BuildTable);
+        assert!(resolved_foreign_triple.shadowed.is_empty());
+    }
+
+    #[test]
+    fn triple_and_cfg_tables_concatenate() {
+        use super::{CargoConfigDocument, resolve};
+
+        let path = Utf8Path::new("/probe/.cargo/config.toml");
+        let text = "[build]\nrustflags = [\"-C\", \"a\"]\n\n[target.x86_64-unknown-linux-gnu]\nrustflags = [\"-C\", \"b\"]\n\n[target.'cfg(windows)']\nrustflags = [\"-C\", \"c\"]\n";
+        let document = CargoConfigDocument::parse(path, text).unwrap();
+        let environment = CargoEnvironment::default();
+
+        let resolved = resolve(&[document], &environment, "x86_64-unknown-linux-gnu");
+
+        assert!(resolved.flags.contains(&"b".to_owned()));
+        assert!(resolved.flags.contains(&"c".to_owned()));
+        assert!(resolved.cfg_tables_unevaluated);
+    }
+
+    #[test]
+    fn environment_shadows_both_configuration_ranks() {
+        use super::{CargoConfigDocument, EnvironmentVariable, RustflagsSource, resolve};
+
+        let path = Utf8Path::new("/probe/.cargo/config.toml");
+        let text = "[build]\nrustflags = [\"-C\", \"a\"]\n\n[target.x86_64-unknown-linux-gnu]\nrustflags = [\"-C\", \"b\"]\n";
+        let document = CargoConfigDocument::parse(path, text).unwrap();
+        let environment = CargoEnvironment {
+            rustflags: Some("-C d  -C e".to_owned()),
+            encoded_rustflags: None,
+            cargo_home: None,
+            chain_ceiling: None,
+        };
+
+        let resolved = resolve(&[document], &environment, "x86_64-unknown-linux-gnu");
+
+        assert_eq!(
+            resolved.source,
+            RustflagsSource::Environment {
+                variable: EnvironmentVariable::Rustflags
+            }
+        );
+        assert_eq!(
+            resolved.flags,
+            vec![
+                "-C".to_owned(),
+                "d".to_owned(),
+                "-C".to_owned(),
+                "e".to_owned()
+            ]
+        );
+        assert_eq!(resolved.shadowed.len(), 2);
+    }
+
+    #[test]
+    fn encoded_rustflags_wins_over_rustflags() {
+        use super::{EnvironmentVariable, RustflagsSource, resolve};
+
+        let environment = CargoEnvironment {
+            rustflags: Some("-C a".to_owned()),
+            encoded_rustflags: Some("-C\u{1f}b".to_owned()),
+            cargo_home: None,
+            chain_ceiling: None,
+        };
+
+        let resolved = resolve(&[], &environment, "x86_64-unknown-linux-gnu");
+
+        assert_eq!(
+            resolved.source,
+            RustflagsSource::Environment {
+                variable: EnvironmentVariable::EncodedRustflags
+            }
+        );
+    }
+
+    #[test]
+    fn a_foreign_triple_table_is_not_live() {
+        use super::{CargoConfigDocument, RustflagsSource, resolve};
+
+        let path = Utf8Path::new("/probe/.cargo/config.toml");
+        let text = "[target.aarch64-apple-darwin]\nrustflags = [\"-C\", \"a\"]\n";
+        let document = CargoConfigDocument::parse(path, text).unwrap();
+        let environment = CargoEnvironment::default();
+
+        let resolved = resolve(&[document], &environment, "x86_64-unknown-linux-gnu");
+
+        assert_eq!(resolved.source, RustflagsSource::Unset);
+        assert!(resolved.live.is_empty());
+        assert!(resolved.shadowed.is_empty());
+        assert!(resolved.flags.is_empty());
+        assert!(!resolved.cfg_tables_unevaluated);
+    }
+
 }
