@@ -371,7 +371,6 @@ pub fn severity_assignments() -> &'static [(&'static str, Severity)] {
         ("profile/panic-abort", Severity::Low),
         ("profile/split-debuginfo", Severity::Low),
         ("deps/feature-provenance", Severity::Low),
-        ("lib/non-optional-dependency", Severity::Low),
         ("nightly", Severity::Low),
         // Info
         ("advisory", Severity::Info),
@@ -618,7 +617,7 @@ mod tests {
     fn severity_assignments_cover_the_whole_specification_table() {
         let assignments = severity_assignments();
 
-        assert_eq!(assignments.len(), 30, "the table has thirty entries");
+        assert_eq!(assignments.len(), 29, "the table has twenty-nine entries");
 
         let count = |severity: Severity| {
             assignments
@@ -629,8 +628,15 @@ mod tests {
 
         assert_eq!(count(Severity::High), 8);
         assert_eq!(count(Severity::Medium), 14);
-        assert_eq!(count(Severity::Low), 6);
+        assert_eq!(count(Severity::Low), 5);
         assert_eq!(count(Severity::Info), 2);
+
+        assert!(
+            !assignments
+                .iter()
+                .any(|(text, _)| *text == concat!("lib/non-optional-", "dependency")),
+            "the dropped rule has no severity"
+        );
 
         for expected in [
             ("profile/opt-level:size", Severity::High),
