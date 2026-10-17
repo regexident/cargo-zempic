@@ -15,6 +15,7 @@ TIER 2  COMPILER                                                       1 finding
         A single code generation unit lets `profile/lto` optimize across the
         whole crate; with several units, that optimization is limited.
         Tradeoff: Compiles are slower; the setting is what unlocks link-time optimization.
+
 SUMMARY
   1 finding: 1 low.  By magnitude: 1 negligible.
   1 auto-fixable.

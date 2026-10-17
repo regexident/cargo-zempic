@@ -10,10 +10,12 @@
 //! tier number, the finding counts, the header's member and selected counts,
 //! and values that come verbatim out of a finding's own fields.
 
+use yansi::{Condition, Paint};
+
 use crate::Resolution;
 use crate::finding::{Finding, Magnitude, Severity, Tier};
 use crate::profile::ResolvedProfile;
-use crate::report::{BOLD, RESET, Report, severity_color};
+use crate::report::{Report, severity_style};
 
 /// Render `report` as the human-readable form.
 ///
@@ -30,8 +32,8 @@ pub fn render(report: &Report, color: bool, width: usize) -> String {
     }
 
     output.push_str(&render_tiers(report, color, width));
-    output.push_str(&render_conflicts(report));
-    output.push_str(&render_summary(report));
+    output.push_str(&render_conflicts(report, color));
+    output.push_str(&render_summary(report, color));
     output.push_str(&render_legend(width));
 
     output
@@ -58,8 +60,8 @@ pub fn render_quiet(report: &Report, color: bool, width: usize) -> String {
         output.push_str(&render_quiet_line(finding, &report.resolution, color));
     }
 
-    output.push_str(&render_conflicts(report));
-    output.push_str(&render_summary(report));
+    output.push_str(&render_conflicts(report, color));
+    output.push_str(&render_summary(report, color));
     output.push_str(&render_legend(width));
 
     output
@@ -69,18 +71,13 @@ pub fn render_quiet(report: &Report, color: bool, width: usize) -> String {
 /// and change column, each separated by two spaces.
 fn render_quiet_line(finding: &Finding, resolution: &Resolution, color: bool) -> String {
     let severity = finding.severity.as_str().to_uppercase();
-    let severity = if color {
-        format!("{}{severity}{RESET}", severity_color(finding.severity))
-    } else {
-        severity
-    };
+    let severity = severity
+        .paint(severity_style(finding.severity))
+        .whenever(Condition::cached(color))
+        .to_string();
 
     let rule = finding.rule.to_string();
-    let rule = if color {
-        format!("{BOLD}{rule}{RESET}")
-    } else {
-        rule
-    };
+    let rule = rule.bold().whenever(Condition::cached(color)).to_string();
 
     let location = finding
         .location
@@ -185,6 +182,7 @@ fn render_tiers(report: &Report, color: bool, width: usize) -> String {
             index + 1,
             *tier,
             findings.len(),
+            color,
             width,
         ));
 
@@ -198,7 +196,13 @@ fn render_tiers(report: &Report, color: bool, width: usize) -> String {
 }
 
 /// Render a tier heading with the finding count right-aligned at `width`.
-fn render_tier_heading(number: usize, tier: Tier, count: usize, width: usize) -> String {
+fn render_tier_heading(
+    number: usize,
+    tier: Tier,
+    count: usize,
+    color: bool,
+    width: usize,
+) -> String {
     let label = format!("TIER {number}  {}", tier.title().to_uppercase());
     let counted = if count == 1 {
         "1 finding".to_owned()
@@ -207,6 +211,7 @@ fn render_tier_heading(number: usize, tier: Tier, count: usize, width: usize) ->
     };
 
     let padding = width.saturating_sub(label.chars().count() + counted.chars().count());
+    let label = label.bold().whenever(Condition::cached(color)).to_string();
 
     format!("{label}{}{counted}\n", " ".repeat(padding))
 }
@@ -216,24 +221,19 @@ fn render_tier_heading(number: usize, tier: Tier, count: usize, width: usize) ->
 /// The first line carries the severity, magnitude, rule identifier and a
 /// right-hand column; the second carries effort, runtime cost and fixability;
 /// the detail and the tradeoff follow wrapped to `width`. When `color` is true
-/// the severity label and the rule identifier are wrapped in their escape
-/// sequences; nothing else is colored.
+/// the severity label, the rule identifier and the `Tradeoff:` label are
+/// wrapped in their escape sequences.
 fn render_finding(finding: &Finding, report: &Report, color: bool, width: usize) -> String {
     let mut output = String::new();
 
     let severity = finding.severity.as_str().to_uppercase();
-    let severity = if color {
-        format!("{}{severity}{RESET}", severity_color(finding.severity))
-    } else {
-        severity
-    };
+    let severity = severity
+        .paint(severity_style(finding.severity))
+        .whenever(Condition::cached(color))
+        .to_string();
 
     let rule = finding.rule.to_string();
-    let rule = if color {
-        format!("{BOLD}{rule}{RESET}")
-    } else {
-        rule
-    };
+    let rule = rule.bold().whenever(Condition::cached(color)).to_string();
 
     let right = right_column(finding, &report.resolution);
 
@@ -250,8 +250,14 @@ fn render_finding(finding: &Finding, report: &Report, color: bool, width: usize)
     ));
 
     output.push_str(&wrap(&finding.detail, 8, width));
+
+    let tradeoff_label = "Tradeoff:"
+        .bold()
+        .whenever(Condition::cached(color))
+        .to_string();
+
     output.push_str(&format!(
-        "        Tradeoff: {}",
+        "        {tradeoff_label} {}\n",
         wrap_inline(&finding.tradeoff, 8, width)
     ));
 
@@ -286,11 +292,16 @@ fn relativize(file: &camino::Utf8Path, resolution: &Resolution) -> String {
 }
 
 /// Render the conflict blocks that follow the tier sections.
-fn render_conflicts(report: &Report) -> String {
+fn render_conflicts(report: &Report, color: bool) -> String {
     let mut output = String::new();
 
+    let heading = "CONFLICT"
+        .bold()
+        .whenever(Condition::cached(color))
+        .to_string();
+
     for conflict in &report.conflicts {
-        output.push_str(&format!("\nCONFLICT  {}\n", conflict.rule_path));
+        output.push_str(&format!("\n{heading}  {}\n", conflict.rule_path));
 
         for recommendation in &conflict.recommendations {
             output.push_str(&format!(
@@ -312,7 +323,7 @@ fn render_conflicts(report: &Report) -> String {
 /// the non-zero magnitude counts; the second states the auto-fixable count, but
 /// only when it is positive. A category whose count is zero is omitted, so the
 /// summary never invites the reader to read meaning into a zero.
-fn render_summary(report: &Report) -> String {
+fn render_summary(report: &Report, color: bool) -> String {
     let summary = &report.summary;
 
     let sev = [
@@ -347,7 +358,12 @@ fn render_summary(report: &Report) -> String {
         first.push_str(&by_magnitude);
     }
 
-    let mut output = format!("\nSUMMARY\n{first}\n");
+    let heading = "SUMMARY"
+        .bold()
+        .whenever(Condition::cached(color))
+        .to_string();
+
+    let mut output = format!("\n{heading}\n{first}\n");
 
     if summary.fixable > 0 {
         output.push_str(&format!("  {} auto-fixable.\n", summary.fixable));

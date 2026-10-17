@@ -15,12 +15,14 @@ TIER 1  FOUNDATIONAL                                                  2 findings
         The symbol table and the strings it references are kept in the linked
         artifact even though they are not needed to run it.
         Tradeoff: Stripping removes function names from backtraces and profiler output.
+
   MEDIUM moderate profile/missing-config           
         effort: trivial   runtime cost: none   fix: report-only
         Every setting falls back to cargo's defaults, which favor compile time
         over a small artifact. The other findings in this report name the
         settings to set.
         Tradeoff: There is nothing to lose by configuring the profile.
+
 TIER 2  COMPILER                                                      3 findings
 
   HIGH   large  profile/opt-level:size           unset -> "z"
@@ -28,16 +30,19 @@ TIER 2  COMPILER                                                      3 findings
         The compiler optimizes for speed. Optimizing for size lets it drop code
         that exists only to run faster.
         Tradeoff: Runtime cost, pronounced with `"z"` on compute-heavy code.
+
   MEDIUM moderate profile/lto                      unset -> "fat"
         effort: trivial   runtime cost: none   fix: consequential
         Optimizing across crate boundaries removes code a per-crate build must
         keep.
         Tradeoff: Link time rises substantially.
+
   LOW    negligible profile/codegen-units            unset -> 1
         effort: trivial   runtime cost: none   fix: consequential
         A single code generation unit lets `profile/lto` optimize across the
         whole crate; with several units, that optimization is limited.
         Tradeoff: Compiles are slower; the setting is what unlocks link-time optimization.
+
 TIER 3  BEHAVIORAL                                                     1 finding
 
   LOW    small  profile/panic-abort              unset -> "abort"
@@ -47,6 +52,7 @@ TIER 3  BEHAVIORAL                                                     1 finding
         Tradeoff: Aborting loses unwinding: a `catch_unwind` in the workspace or any
         dependency will no longer recover from a panic. The setting applies
         workspace-wide, because `panic` cannot be set per package.
+
 SUMMARY
   6 findings: 2 high, 2 medium, 2 low.  By magnitude: 2 large, 2 moderate, 1 small, 1 negligible.
   5 auto-fixable.

@@ -15,6 +15,7 @@ TIER 2  COMPILER                                                       1 finding
         Optimizing across crate boundaries removes code a per-crate build must
         keep.
         Tradeoff: Link time rises substantially.
+
 SUMMARY
   1 finding: 1 medium.  By magnitude: 1 moderate.
   1 auto-fixable.

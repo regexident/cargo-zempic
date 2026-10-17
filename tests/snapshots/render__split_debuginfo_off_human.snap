@@ -16,12 +16,14 @@ TIER 1  FOUNDATIONAL                                                  2 findings
         `debug` saves compile time and the intermediate disk it writes while
         leaving the linked artifact largely unchanged.
         Tradeoff: A binary built without debug information cannot be stepped through.
+
   LOW    small  profile/split-debuginfo          "off" -> "packed"
         effort: trivial   runtime cost: none   fix: safe
         On this target debug information is left in the linked artifact.
         Splitting it into side files moves it out without discarding it.
         Tradeoff: This recommendation is platform-specific and the split files must be
         kept beside the binary for a debugger to find them.
+
 SUMMARY
   2 findings: 1 high, 1 low.  By magnitude: 1 moderate, 1 small.
   2 auto-fixable.

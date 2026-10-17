@@ -17,6 +17,7 @@ TIER 3  BEHAVIORAL                                                     1 finding
         Tradeoff: Aborting loses unwinding: a `catch_unwind` in the workspace or any
         dependency will no longer recover from a panic. The setting applies
         workspace-wide, because `panic` cannot be set per package.
+
 SUMMARY
   1 finding: 1 low.  By magnitude: 1 small.
   1 auto-fixable.

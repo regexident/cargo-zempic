@@ -451,26 +451,13 @@ pub fn render_width() -> usize {
     .clamp(MINIMUM_WIDTH, MAXIMUM_WIDTH)
 }
 
-/// Reset any color or emphasis.
-pub const RESET: &str = "\x1b[0m";
-/// Render text in bold.
-pub const BOLD: &str = "\x1b[1m";
-/// Render text in red.
-pub const RED: &str = "\x1b[31m";
-/// Render text in yellow.
-pub const YELLOW: &str = "\x1b[33m";
-/// Render text in blue.
-pub const BLUE: &str = "\x1b[34m";
-/// Render text dimmed.
-pub const DIM: &str = "\x1b[2m";
-
-/// The color a severity is rendered in.
-pub fn severity_color(severity: Severity) -> &'static str {
+/// The style a severity is rendered in.
+pub fn severity_style(severity: Severity) -> yansi::Style {
     match severity {
-        Severity::High => RED,
-        Severity::Medium => YELLOW,
-        Severity::Low => BLUE,
-        Severity::Info => DIM,
+        Severity::High => yansi::Color::Red.into(),
+        Severity::Medium => yansi::Color::Yellow.into(),
+        Severity::Low => yansi::Color::Blue.into(),
+        Severity::Info => yansi::Style::new().dim(),
     }
 }
 

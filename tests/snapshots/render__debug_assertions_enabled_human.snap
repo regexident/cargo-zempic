@@ -16,6 +16,7 @@ TIER 3  BEHAVIORAL                                                     1 finding
         shipped artifact.
         Tradeoff: The removed checks catch bugs; an invariant they guard goes unnoticed in
         the release build.
+
 SUMMARY
   1 finding: 1 medium.  By magnitude: 1 small.
   1 auto-fixable.

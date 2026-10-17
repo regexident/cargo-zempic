@@ -19,6 +19,7 @@ TIER 2  COMPILER                                                      2 findings
         Tradeoff: The flag increases size; rarely intended outside coverage runs. Like any
         rustflags change, removing it invalidates the whole build cache, costing
         a full rebuild.
+
   MEDIUM moderate config/link-gc-sections          unset -> -C link-arg=-Wl,--gc-sections
         effort: trivial   runtime cost: none   fix: consequential
         `build.rustflags` in
@@ -30,6 +31,7 @@ TIER 2  COMPILER                                                      2 findings
         Tradeoff: Platform-specific: `--gc-sections` on ELF, `-dead_strip` on Mach-O. Like
         any rustflags change, adding it invalidates the whole build cache,
         costing a full rebuild.
+
 SUMMARY
   2 findings: 1 high, 1 medium.  By magnitude: 1 moderate, 1 none.
   2 auto-fixable.
