@@ -1,5 +1,6 @@
 //! The rule registry and the single table that assigns every rule its severity.
 
+pub mod config;
 pub mod profile;
 
 use crate::finding::{RuleId, Selector, Severity};
@@ -236,6 +237,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             fixability: crate::finding::Fixability::Safe,
             summary: "Reporting in-binary debug information on an Apple target",
             documentation: include_str!("rules/docs/profile/split-debuginfo.md"),
+        },
+        RuleMetadata {
+            rule: &crate::rules::config::RUSTFLAGS_SHADOWED_RULE,
+            id: "config/rustflags-shadowed",
+            tier: crate::finding::Tier::Compiler,
+            magnitude: crate::finding::Magnitude::None,
+            fixability: crate::finding::Fixability::ReportOnly,
+            summary: "Reporting a rustflags source made inert by a higher-ranked one",
+            documentation: include_str!("rules/docs/config/rustflags-shadowed.md"),
         },
     ];
 

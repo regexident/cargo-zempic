@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 15] = [
+const RULE_FIXTURES: [&str; 17] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -120,6 +120,8 @@ const RULE_FIXTURES: [&str; 15] = [
     "overflow-checks-enabled",
     "member-profile-table",
     "member-profile-tables",
+    "rustflags-shadowed",
+    "rustflags-cfg-table",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2403,6 +2405,7 @@ fn registry_covers_every_profile_and_workspace_assignment() {
     registered.sort();
 
     let expected = [
+        "config/rustflags-shadowed",
         "profile/codegen-units",
         "profile/debug-assertions",
         "profile/debug-info",
@@ -2477,4 +2480,96 @@ fn every_registered_rule_carries_a_tradeoff_on_every_finding_it_emits() {
             );
         }
     }
+}
+
+// MARK: config/rustflags-shadowed
+
+#[test]
+fn rustflags_shadowed_fires_when_a_target_table_outranks_build() {
+    use cargo_zempic::finding::{Confidence, Fixability, Magnitude, Severity, Tier};
+
+    let findings = findings_for("rustflags-shadowed", Some("x86_64-unknown-linux-gnu"));
+    let finding = finding_for(&findings, "config/rustflags-shadowed");
+
+    assert_eq!(finding.tier, Tier::Compiler);
+    assert_eq!(finding.severity, Severity::High);
+    assert_eq!(finding.magnitude, Magnitude::None);
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert_eq!(finding.confidence, Confidence::High);
+    assert_eq!(finding.change, None);
+    assert_eq!(finding.package.as_deref(), Some("rustflags-shadowed"));
+
+    let location = finding
+        .location
+        .as_ref()
+        .expect("the finding points at the shadowed key");
+    assert!(
+        location.span.file.as_str().ends_with(".cargo/config.toml"),
+        "the location must point at the cargo configuration file: {}",
+        location.span.file
+    );
+    assert_eq!(location.span.key, "build.rustflags");
+
+    assert!(
+        finding.detail.contains("build.rustflags"),
+        "the detail must name the shadowed key: {}",
+        finding.detail
+    );
+    assert!(
+        finding.detail.contains("x86_64-unknown-linux-gnu"),
+        "the detail must name the live target table: {}",
+        finding.detail
+    );
+
+    // Plausible bug: firing without checking that the `target.*` table's
+    // triple matches the one being built. `rustflags-shadowed`'s table names
+    // only `x86_64-unknown-linux-gnu`, so under a foreign triple only
+    // `build.rustflags` is live and nothing is shadowed.
+    let foreign_triple_findings = findings_for("rustflags-shadowed", Some("aarch64-apple-darwin"));
+    assert!(
+        !finding_rules(&foreign_triple_findings).contains(&"config/rustflags-shadowed".to_owned()),
+        "a target table naming a different triple must not shadow anything: {:?}",
+        finding_rules(&foreign_triple_findings)
+    );
+}
+
+#[test]
+fn rustflags_shadowed_caps_confidence_for_an_unevaluated_cfg_table() {
+    use cargo_zempic::finding::Confidence;
+
+    let findings = findings_for("rustflags-cfg-table", Some("x86_64-unknown-linux-gnu"));
+    let finding = finding_for(&findings, "config/rustflags-shadowed");
+
+    assert_eq!(
+        finding.confidence,
+        Confidence::Medium,
+        "a live `cfg(...)` table whose predicate was not evaluated must cap \
+         confidence: {finding:?}"
+    );
+}
+
+#[test]
+fn rustflags_shadowed_is_quiet_with_a_single_source() {
+    // Under a triple `rustflags-shadowed`'s `[target.x86_64-unknown-linux-gnu]`
+    // table does not name, only `build.rustflags` resolves at all: no rank
+    // below it is present to be shadowed.
+    let findings = findings_for("rustflags-shadowed", Some("aarch64-apple-darwin"));
+
+    assert!(
+        !finding_rules(&findings).contains(&"config/rustflags-shadowed".to_owned()),
+        "a single live source must not fire: {:?}",
+        finding_rules(&findings)
+    );
+}
+
+#[test]
+fn rustflags_shadowed_is_quiet_without_a_cargo_configuration() {
+    // `fully-optimized` carries no `.cargo/config.toml` at all.
+    let findings = findings_for("fully-optimized", None);
+
+    assert!(
+        !finding_rules(&findings).contains(&"config/rustflags-shadowed".to_owned()),
+        "a workspace with no cargo configuration must not fire: {:?}",
+        finding_rules(&findings)
+    );
 }

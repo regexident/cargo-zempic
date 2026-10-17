@@ -1,0 +1,23 @@
+[package]
+name = "rustflags-shadowed"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rustflags-shadowed"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+strip = "symbols"
+panic = "abort"
+codegen-units = 1
+incremental = false
+debug = false
+debug-assertions = false
+overflow-checks = false
+split-debuginfo = "packed"
+
+[profile.release.package."*"]
+opt-level = "z"
