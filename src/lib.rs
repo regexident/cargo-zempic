@@ -511,7 +511,13 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
     let resolution = finish(workspace_scope, &profile_name, dimensions, &root_manifest)?;
 
     let member_manifests = member_manifests(&resolution)?;
-    let findings = rules::evaluate(&resolution, &root_manifest, &member_manifests);
+    let cargo_configs = package_rustflags(&resolution, &config.environment)?;
+    let findings = rules::evaluate(
+        &resolution,
+        &root_manifest,
+        &member_manifests,
+        &cargo_configs,
+    );
     let filtered = config::filter(findings, &effective_gates, config.today);
 
     let mut notices = filtered.notices;
@@ -575,6 +581,44 @@ pub fn member_manifests(
     }
 
     Ok(manifests)
+}
+
+/// Resolves the cargo configuration rustflags for every selected package.
+///
+/// A cargo configuration chain is resolved per package directory, and the
+/// root package of a non-virtual workspace has a package directory like any
+/// other, so every entry of `resolution.selected` is resolved here, including
+/// the root's — unlike [`member_manifests`], which excludes it because that
+/// list concerns a `[profile.*]` table cargo only honors in the root.
+///
+/// # Errors
+///
+/// Returns whatever [`cargo_config::resolve_for_package`] returns for a
+/// `config.toml` found in a package's chain that exists but cannot be read or
+/// parsed.
+pub fn package_rustflags(
+    resolution: &Resolution,
+    environment: &cargo_config::CargoEnvironment,
+) -> Result<Vec<(String, cargo_config::ResolvedRustflags)>> {
+    resolution
+        .selected
+        .iter()
+        .map(|package| {
+            let package_directory = package
+                .manifest_path
+                .parent()
+                .map(camino::Utf8Path::to_owned)
+                .unwrap_or_else(|| resolution.workspace_root.clone());
+
+            let resolved = cargo_config::resolve_for_package(
+                &package_directory,
+                environment,
+                &resolution.target_triple,
+            )?;
+
+            Ok((package.name.clone(), resolved))
+        })
+        .collect()
 }
 
 /// Builds the [`workspace::MetadataQuery`] a configuration resolves through.

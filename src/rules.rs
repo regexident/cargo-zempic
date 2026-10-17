@@ -24,6 +24,15 @@ pub struct RuleContext<'a> {
     pub member_manifests: &'a [(String, crate::manifest::ManifestDocument)],
     /// The target triple the resolution runs for.
     pub target_triple: &'a str,
+    /// The resolved cargo configuration rustflags for every selected package,
+    /// paired with each package's name in selection order.
+    ///
+    /// Unlike [`member_manifests`](Self::member_manifests), this list includes
+    /// the root package of a non-virtual workspace: a cargo configuration
+    /// chain is resolved per package directory, and the root package's
+    /// directory is one like any other, so excluding it would silently drop
+    /// the common case of a single-package workspace.
+    pub cargo_configs: &'a [(String, crate::cargo_config::ResolvedRustflags)],
 }
 
 /// A rule's behavior: the findings one evaluation produces for a workspace.
@@ -244,10 +253,15 @@ pub fn registry() -> &'static [RuleMetadata] {
 /// The order of the returned findings is the direction order of the dimensions
 /// and the registry; the findings are not sorted here, because
 /// [`Report::new`](crate::report::Report::new) imposes the report order.
+///
+/// `cargo_configs` carries the resolved cargo configuration rustflags for
+/// every selected package, including the root package of a non-virtual
+/// workspace.
 pub fn evaluate(
     resolution: &crate::Resolution,
     root_manifest: &crate::manifest::ManifestDocument,
     member_manifests: &[(String, crate::manifest::ManifestDocument)],
+    cargo_configs: &[(String, crate::cargo_config::ResolvedRustflags)],
 ) -> Vec<crate::finding::Finding> {
     let mut findings = Vec::new();
 
@@ -258,6 +272,7 @@ pub fn evaluate(
             root_manifest,
             member_manifests,
             target_triple: &resolution.target_triple,
+            cargo_configs,
         };
 
         for entry in registry() {
@@ -452,6 +467,7 @@ mod tests {
                     root_manifest: &manifest,
                     member_manifests: &[],
                     target_triple: &resolution.target_triple,
+                    cargo_configs: &[],
                 };
 
                 findings.extend(NeutralProbe.evaluate(&context));
@@ -481,6 +497,7 @@ mod tests {
                 root_manifest: &manifest,
                 member_manifests: &[],
                 target_triple: &resolution.target_triple,
+                cargo_configs: &[],
             };
 
             findings.extend(NeutralProbe.evaluate(&context));

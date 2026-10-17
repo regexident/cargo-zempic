@@ -934,7 +934,7 @@ fn analysis_of_a_workspace_evaluates_the_registry() {
     let root_manifest =
         ManifestDocument::load(&workspace.root().join("Cargo.toml")).expect("the root manifest");
 
-    let findings = cargo_zempic::rules::evaluate(&resolution, &root_manifest, &[]);
+    let findings = cargo_zempic::rules::evaluate(&resolution, &root_manifest, &[], &[]);
 
     // A bare release profile leaves `strip` at its cargo default, so the
     // registry's `profile/strip` entry produces a finding.
@@ -968,6 +968,44 @@ fn member_manifests_exclude_the_workspace_root() {
             "the root package's own manifest must be excluded"
         );
     }
+}
+
+/// The resolved rustflags carried on the rule context cover every selected
+/// package, including a non-virtual workspace's root package, unlike
+/// `member_manifests` which excludes it.
+#[test]
+fn cargo_configs_cover_every_selected_package_including_the_root() {
+    let single_package_workspace = common::Fixture::new("fully-optimized").materialize();
+    let single_package_config = analysis_config(&single_package_workspace);
+    let single_package_resolution = resolve(&single_package_config).expect("resolution succeeds");
+
+    let single_package_configs = cargo_zempic::package_rustflags(
+        &single_package_resolution,
+        &single_package_config.environment,
+    )
+    .expect("rustflags resolve");
+
+    assert_eq!(single_package_configs.len(), 1);
+    assert_eq!(single_package_configs[0].0, "fully-optimized");
+    assert_eq!(
+        single_package_configs[0].1.source,
+        cargo_zempic::cargo_config::RustflagsSource::Unset
+    );
+
+    let multi_member_workspace = common::Fixture::new("multi-member").materialize();
+    let multi_member_config = analysis_config(&multi_member_workspace);
+    let multi_member_resolution = resolve(&multi_member_config).expect("resolution succeeds");
+
+    let multi_member_configs =
+        cargo_zempic::package_rustflags(&multi_member_resolution, &multi_member_config.environment)
+            .expect("rustflags resolve");
+
+    let names: Vec<&str> = multi_member_configs
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+
+    assert_eq!(names, ["alpha", "beta"]);
 }
 
 /// A member manifest that cannot be parsed fails the analysis.
