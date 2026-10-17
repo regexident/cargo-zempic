@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 17] = [
+const RULE_FIXTURES: [&str; 18] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -122,6 +122,7 @@ const RULE_FIXTURES: [&str; 17] = [
     "member-profile-tables",
     "rustflags-shadowed",
     "rustflags-cfg-table",
+    "link-dead-code",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2405,6 +2406,7 @@ fn registry_covers_every_profile_and_workspace_assignment() {
     registered.sort();
 
     let expected = [
+        "config/link-dead-code",
         "config/rustflags-shadowed",
         "profile/codegen-units",
         "profile/debug-assertions",
@@ -2550,10 +2552,9 @@ fn rustflags_shadowed_caps_confidence_for_an_unevaluated_cfg_table() {
 
 #[test]
 fn rustflags_shadowed_is_quiet_with_a_single_source() {
-    // Under a triple `rustflags-shadowed`'s `[target.x86_64-unknown-linux-gnu]`
-    // table does not name, only `build.rustflags` resolves at all: no rank
-    // below it is present to be shadowed.
-    let findings = findings_for("rustflags-shadowed", Some("aarch64-apple-darwin"));
+    // `link-dead-code` carries only `build.rustflags`, with no `target.*`
+    // table in its chain at all: no rank below it is present to be shadowed.
+    let findings = findings_for("link-dead-code", Some("x86_64-unknown-linux-gnu"));
 
     assert!(
         !finding_rules(&findings).contains(&"config/rustflags-shadowed".to_owned()),
@@ -2570,6 +2571,121 @@ fn rustflags_shadowed_is_quiet_without_a_cargo_configuration() {
     assert!(
         !finding_rules(&findings).contains(&"config/rustflags-shadowed".to_owned()),
         "a workspace with no cargo configuration must not fire: {:?}",
+        finding_rules(&findings)
+    );
+}
+
+// MARK: config/link-dead-code
+
+/// The findings a named fixture produces under `environment`, optionally for
+/// a pinned target.
+fn findings_for_environment(
+    fixture: &str,
+    target: Option<&str>,
+    environment: cargo_zempic::cargo_config::CargoEnvironment,
+) -> Vec<cargo_zempic::finding::Finding> {
+    let workspace = common::Fixture::new(fixture).materialize();
+    let mut config = analyze_config(&workspace, &[]);
+    config.target = target.map(str::to_owned);
+    config.environment = environment;
+
+    cargo_zempic::analyze(&config)
+        .expect("the analysis succeeds")
+        .findings
+}
+
+#[test]
+fn link_dead_code_fires_on_the_live_source() {
+    use cargo_zempic::finding::{Confidence, Fixability, Magnitude, Severity, Tier};
+
+    let findings = findings_for("link-dead-code", Some("x86_64-unknown-linux-gnu"));
+    let finding = finding_for(&findings, "config/link-dead-code");
+
+    assert_eq!(finding.tier, Tier::Compiler);
+    assert_eq!(finding.severity, Severity::High);
+    assert_eq!(finding.magnitude, Magnitude::None);
+    assert_eq!(finding.fixability, Fixability::Safe);
+    assert_eq!(finding.confidence, Confidence::High);
+    assert_eq!(finding.change, None);
+    assert_eq!(finding.package.as_deref(), Some("link-dead-code"));
+
+    let location = finding
+        .location
+        .as_ref()
+        .expect("the finding points at the key declaring the flag");
+    assert_eq!(location.span.key, "build.rustflags");
+    assert!(
+        location.span.file.as_str().ends_with(".cargo/config.toml"),
+        "the location must point at the cargo configuration file: {}",
+        location.span.file
+    );
+
+    assert!(
+        finding.tradeoff.contains("rebuild"),
+        "the tradeoff must note the full rebuild cost: {}",
+        finding.tradeoff
+    );
+}
+
+#[test]
+fn link_dead_code_is_report_only_from_the_environment() {
+    use cargo_zempic::cargo_config::CargoEnvironment;
+    use cargo_zempic::finding::Fixability;
+
+    let workspace = common::Fixture::new("link-dead-code").materialize();
+    let environment = CargoEnvironment {
+        rustflags: Some("-C link-dead-code".to_owned()),
+        ..CargoEnvironment::sealed(workspace.root())
+    };
+
+    let findings = findings_for_environment(
+        "link-dead-code",
+        Some("x86_64-unknown-linux-gnu"),
+        environment,
+    );
+    let finding = finding_for(&findings, "config/link-dead-code");
+
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert!(
+        finding.detail.contains("RUSTFLAGS"),
+        "the detail must name the environment variable: {}",
+        finding.detail
+    );
+}
+
+#[test]
+fn link_dead_code_is_quiet_without_the_flag() {
+    let findings = findings_for("fully-optimized", None);
+
+    assert!(
+        !finding_rules(&findings).contains(&"config/link-dead-code".to_owned()),
+        "a workspace whose rustflags never set the flag must not fire: {:?}",
+        finding_rules(&findings)
+    );
+}
+
+#[test]
+fn link_dead_code_ignores_a_shadowed_flag() {
+    use cargo_zempic::cargo_config::CargoEnvironment;
+
+    // The same fixture materializes a `build.rustflags` carrying the flag,
+    // but under its own triple the environment outranks it, so only
+    // `RUSTFLAGS` is live and `build.rustflags` never reaches the compiler.
+    let workspace = common::Fixture::new("link-dead-code").materialize();
+    let environment = CargoEnvironment {
+        rustflags: Some("-C target-cpu=native".to_owned()),
+        ..CargoEnvironment::sealed(workspace.root())
+    };
+
+    let findings = findings_for_environment(
+        "link-dead-code",
+        Some("x86_64-unknown-linux-gnu"),
+        environment,
+    );
+
+    assert!(
+        !finding_rules(&findings).contains(&"config/link-dead-code".to_owned()),
+        "a flag shadowed by a higher-ranked source must not fire: {:?}",
         finding_rules(&findings)
     );
 }

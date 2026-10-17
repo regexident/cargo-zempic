@@ -10,8 +10,10 @@
 //! configuration files' text, so a finding here is about what cargo applies
 //! rather than about what a file happens to contain.
 
-use crate::cargo_config::RustflagsSource;
-use crate::finding::{Change, Confidence, Effort, Finding, Location, RuleId, RuntimeCost};
+use crate::cargo_config::{RustflagsEntry, RustflagsSource};
+use crate::finding::{
+    Change, Confidence, Effort, Finding, Fixability, Location, RuleId, RuntimeCost,
+};
 use crate::manifest::KeySpan;
 use crate::rules::{Rule, RuleContext, RuleMetadata};
 
@@ -35,10 +37,6 @@ fn config_rules_apply(context: &RuleContext<'_>, package: &str) -> bool {
 /// so it is the natural destination for a key no file in the chain declares.
 /// Line one, column one stands in for "the file does not yet contain this
 /// key" rather than naming a real position in an existing document.
-#[expect(
-    dead_code,
-    reason = "reserved for a rule that recommends a key no chain file declares yet"
-)]
 fn intended_span(workspace_root: &camino::Utf8Path, key: &str) -> KeySpan {
     KeySpan {
         file: workspace_root.join(".cargo").join("config.toml"),
@@ -135,6 +133,7 @@ impl Rule for RustflagsShadowedRule {
                     metadata,
                     Some(package.clone()),
                     confidence,
+                    metadata.fixability,
                     None,
                     Some(entry.key.clone()),
                     &format!("`{}` is inert", entry.key.key),
@@ -142,6 +141,129 @@ impl Rule for RustflagsShadowedRule {
                     "Existing flags are silently inert.",
                 ));
             }
+        }
+
+        findings
+    }
+}
+
+/// Reports a build whose live rustflags carry `-C link-dead-code`.
+///
+/// The flag exists so coverage instrumentation can observe code the program
+/// never calls; outside a coverage run it only enlarges the artifact for no
+/// benefit. A shadowed occurrence of the flag is not reported here, by the
+/// same reasoning [`RustflagsShadowedRule`] exists for: a flag cargo never
+/// applies is not a property of the artifact.
+pub struct LinkDeadCodeRule;
+
+/// The instance registered for [`LinkDeadCodeRule`].
+pub const LINK_DEAD_CODE_RULE: LinkDeadCodeRule = LinkDeadCodeRule;
+
+/// The live entry whose own flags carry `link-dead-code`, among `live`.
+///
+/// `resolved.flags` is the concatenation of every live entry and does not say
+/// which one contributed the flag, so the search re-checks each entry's own
+/// flags individually to find the key a finding should point at.
+///
+/// # Panics
+///
+/// Panics when no entry in `live` carries the flag. A caller holding a
+/// `TargetTables` or `BuildTable` source whose concatenated `flags` enables
+/// `link-dead-code` always has at least one such entry, because the
+/// concatenation is built only from `live`'s own entries.
+fn live_entry_carrying_link_dead_code(live: &[RustflagsEntry]) -> &RustflagsEntry {
+    live.iter()
+        .find(|entry| crate::cargo_config::flag_enabled(&entry.flags, "link-dead-code"))
+        .expect(
+            "a concatenation carrying the flag is built only from `live`'s own entries, \
+             so one of them carries it",
+        )
+}
+
+impl Rule for LinkDeadCodeRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        let metadata = registered("config/link-dead-code");
+        let mut findings = Vec::new();
+
+        for (package, resolved) in context.cargo_configs {
+            if !config_rules_apply(context, package) {
+                continue;
+            }
+
+            if !crate::cargo_config::flag_enabled(&resolved.flags, "link-dead-code") {
+                continue;
+            }
+
+            // Same confidence cap as `RustflagsShadowedRule`: an unevaluated
+            // `cfg(...)` table may be the only reason this rank won at all.
+            let confidence = if resolved.source == RustflagsSource::TargetTables
+                && resolved.cfg_tables_unevaluated
+            {
+                Confidence::Medium
+            } else {
+                Confidence::High
+            };
+
+            let (location, fixability, source_description) = match &resolved.source {
+                RustflagsSource::Environment { variable } => (
+                    intended_span(&context.resolution.workspace_root, "build.rustflags"),
+                    Fixability::ReportOnly,
+                    format!("the `{}` environment variable", variable.as_str()),
+                ),
+                RustflagsSource::TargetTables | RustflagsSource::BuildTable => {
+                    let entry = live_entry_carrying_link_dead_code(&resolved.live);
+
+                    // A remedy can only be written to a file the project
+                    // owns; a chain file above the workspace root belongs to
+                    // the user's machine, not to the project under analysis.
+                    let outside_workspace = !entry
+                        .key
+                        .file
+                        .starts_with(&context.resolution.workspace_root);
+
+                    let fixability = if outside_workspace {
+                        Fixability::ReportOnly
+                    } else {
+                        metadata.fixability
+                    };
+
+                    (
+                        entry.key.clone(),
+                        fixability,
+                        format!("`{}` in `{}`", entry.key.key, entry.key.file),
+                    )
+                }
+                RustflagsSource::Unset => unreachable!(
+                    "`Unset` carries no flags, so `flag_enabled` on it is always false \
+                     and this arm is never reached"
+                ),
+            };
+
+            let downgrade_note = if fixability == Fixability::ReportOnly {
+                " This source lies outside the workspace, so the change is the user's to \
+                 make."
+            } else {
+                ""
+            };
+
+            let detail = format!(
+                "{source_description} sets `-C link-dead-code`, which keeps symbols the \
+                 linker would otherwise discard.{downgrade_note}"
+            );
+
+            findings.push(build(
+                metadata,
+                Some(package.clone()),
+                confidence,
+                fixability,
+                None,
+                Some(location),
+                "The build retains dead code",
+                detail,
+                "The flag increases size; rarely intended outside coverage runs. Like any \
+                 rustflags change, removing it invalidates the whole build cache, costing \
+                 a full rebuild.",
+            ));
         }
 
         findings
@@ -164,19 +286,24 @@ fn registered(id: &str) -> &'static RuleMetadata {
 /// fields.
 ///
 /// Mirrors [`crate::rules::profile`]'s private `build`, but takes `confidence`
-/// as a parameter rather than hardcoding [`Confidence::High`]: a rule in this
-/// module may report at reduced confidence when its verdict rests on a
-/// `cfg(...)` table this crate does not evaluate.
+/// and `fixability` as parameters rather than hardcoding
+/// [`Confidence::High`] and the registry entry's own fixability: a rule in
+/// this module may report at reduced confidence when its verdict rests on a
+/// `cfg(...)` table this crate does not evaluate, and may downgrade
+/// fixability when the source it would edit lies outside what it can write
+/// to — a file outside the workspace, or an environment variable with no file
+/// at all.
 #[expect(
     clippy::too_many_arguments,
-    reason = "mirrors `crate::rules::profile`'s own `build`, plus the `confidence` \
-              parameter that module hardcodes; splitting the parameters into a struct \
-              would not make a one-call-site constructor any clearer"
+    reason = "mirrors `crate::rules::profile`'s own `build`, plus the `confidence` and \
+              `fixability` parameters that module hardcodes; splitting the parameters \
+              into a struct would not make a one-call-site constructor any clearer"
 )]
 fn build(
     metadata: &'static RuleMetadata,
     package: Option<String>,
     confidence: Confidence,
+    fixability: Fixability,
     change: Option<Change>,
     location: Option<KeySpan>,
     title: &str,
@@ -195,7 +322,7 @@ fn build(
         confidence,
         effort: Effort::Trivial,
         runtime_cost: RuntimeCost::None,
-        fixability: metadata.fixability,
+        fixability,
         change,
         location: location.map(Location::new),
         title: title.to_owned(),

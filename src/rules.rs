@@ -247,6 +247,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             summary: "Reporting a rustflags source made inert by a higher-ranked one",
             documentation: include_str!("rules/docs/config/rustflags-shadowed.md"),
         },
+        RuleMetadata {
+            rule: &crate::rules::config::LINK_DEAD_CODE_RULE,
+            id: "config/link-dead-code",
+            tier: crate::finding::Tier::Compiler,
+            magnitude: crate::finding::Magnitude::None,
+            fixability: crate::finding::Fixability::Safe,
+            summary: "Reporting a build that retains dead code",
+            documentation: include_str!("rules/docs/config/link-dead-code.md"),
+        },
     ];
 
     REGISTRY
