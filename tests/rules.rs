@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 18] = [
+const RULE_FIXTURES: [&str; 19] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -123,6 +123,7 @@ const RULE_FIXTURES: [&str; 18] = [
     "rustflags-shadowed",
     "rustflags-cfg-table",
     "link-dead-code",
+    "resolver-unset",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2409,6 +2410,7 @@ fn registry_covers_every_profile_workspace_and_config_assignment() {
         "config/link-dead-code",
         "config/link-gc-sections",
         "config/rustflags-shadowed",
+        "deps/workspace-resolver",
         "profile/codegen-units",
         "profile/debug-assertions",
         "profile/debug-info",
@@ -2839,4 +2841,52 @@ fn link_gc_sections_prioritizes_dead_code_over_an_unclassified_target() {
          even on an unclassified target: {}",
         finding.detail
     );
+}
+
+// MARK: deps/workspace-resolver
+
+#[test]
+fn workspace_resolver_fires_on_a_virtual_manifest_without_a_resolver() {
+    use cargo_zempic::finding::{Confidence, Fixability, Magnitude, Severity, Tier};
+
+    let findings = findings_for("resolver-unset", None);
+    let finding = finding_for(&findings, "deps/workspace-resolver");
+
+    assert_eq!(finding.tier, Tier::Dependencies);
+    assert_eq!(finding.severity, Severity::High);
+    assert_eq!(finding.magnitude, Magnitude::Moderate);
+    assert_eq!(finding.fixability, Fixability::Consequential);
+    assert_eq!(finding.confidence, Confidence::High);
+    assert_eq!(finding.package, None);
+    assert_eq!(
+        finding
+            .change
+            .as_ref()
+            .map(|change| (change.current.as_str(), change.recommended.as_str())),
+        Some(("unset", "2"))
+    );
+
+    let span = &finding
+        .location
+        .as_ref()
+        .expect("the finding carries a location")
+        .span;
+
+    assert_eq!(span.key, "workspace.resolver");
+    assert_eq!(span.line, 1);
+    assert!(span.file.as_str().ends_with("Cargo.toml"), "{}", span.file);
+}
+
+#[test]
+fn workspace_resolver_is_quiet_when_the_workspace_sets_one() {
+    let findings = findings_for("multi-member", None);
+
+    assert!(!finding_rules(&findings).contains(&"deps/workspace-resolver".to_owned()));
+}
+
+#[test]
+fn workspace_resolver_is_quiet_for_an_edition_2021_package() {
+    let findings = findings_for("bare-release", None);
+
+    assert!(!finding_rules(&findings).contains(&"deps/workspace-resolver".to_owned()));
 }

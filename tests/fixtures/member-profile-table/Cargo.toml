@@ -1,5 +1,6 @@
 [workspace]
 members = ["member"]
+resolver = "3"
 
 [profile.release]
 opt-level = "z"

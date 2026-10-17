@@ -1,6 +1,7 @@
 //! The rule registry and the single table that assigns every rule its severity.
 
 pub mod config;
+pub mod deps;
 pub mod profile;
 
 use crate::finding::{RuleId, Selector, Severity};
@@ -264,6 +265,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             fixability: crate::finding::Fixability::Consequential,
             summary: "Reporting a linker that retains unreferenced sections",
             documentation: include_str!("rules/docs/config/link-gc-sections.md"),
+        },
+        RuleMetadata {
+            rule: &crate::rules::deps::WORKSPACE_RESOLVER_RULE,
+            id: "deps/workspace-resolver",
+            tier: crate::finding::Tier::Dependencies,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::Consequential,
+            summary: "Reporting a workspace that unifies features across dependency kinds",
+            documentation: include_str!("rules/docs/deps/workspace-resolver.md"),
         },
     ];
 
