@@ -2396,7 +2396,7 @@ fn ignored_member_profile_is_quiet_without_a_member_table() {
 // MARK: Registry totality
 
 #[test]
-fn registry_covers_every_profile_and_workspace_assignment() {
+fn registry_covers_every_profile_workspace_and_config_assignment() {
     use cargo_zempic::finding::{RuleId, Selector};
 
     let mut registered: Vec<String> = cargo_zempic::rules::registry()
@@ -2426,13 +2426,13 @@ fn registry_covers_every_profile_and_workspace_assignment() {
 
     assert_eq!(registered, expected, "the registry must hold exactly these");
 
-    // Every `profile/*` and `workspace/*` severity assignment has a registry
-    // entry, so an assignment cannot be left unregistered.
+    // Every `profile/*`, `workspace/*` and `config/*` severity assignment has
+    // a registry entry, so an assignment cannot be left unregistered.
     for (text, _) in cargo_zempic::rules::severity_assignments() {
         let selector = Selector::parse(text).expect("the assignment is a selector");
         let category = text.split(['/', ':']).next().unwrap_or(text);
 
-        if category != "profile" && category != "workspace" {
+        if category != "profile" && category != "workspace" && category != "config" {
             continue;
         }
 
@@ -2447,6 +2447,51 @@ fn registry_covers_every_profile_and_workspace_assignment() {
             "assignment `{text}` has no registered rule"
         );
         let _ = selector;
+    }
+}
+
+/// Every registered rule fires on at least one [`RULE_FIXTURES`] entry, under
+/// at least one of the two pinned target triples, and leaves at least one
+/// other combination quiet.
+///
+/// A rule registered with a severity assignment but no quiet fixture would
+/// fire on everything and nobody would notice, because only the positive case
+/// was ever exercised; this proves both directions for the whole registry at
+/// once rather than relying on each rule's own hand-written tests to
+/// remember it.
+#[test]
+fn every_registered_rule_has_a_firing_and_a_quiet_fixture() {
+    use std::collections::BTreeMap;
+
+    const TRIPLES: [&str; 2] = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"];
+
+    let mut findings_by_combination: BTreeMap<(&str, &str), Vec<String>> = BTreeMap::new();
+
+    for fixture in RULE_FIXTURES {
+        for triple in TRIPLES {
+            let findings = findings_for(fixture, Some(triple));
+            findings_by_combination.insert((fixture, triple), finding_rules(&findings));
+        }
+    }
+
+    for entry in cargo_zempic::rules::registry() {
+        let fires = findings_by_combination
+            .values()
+            .any(|rules| rules.contains(&entry.id.to_owned()));
+        let quiet = findings_by_combination
+            .values()
+            .any(|rules| !rules.contains(&entry.id.to_owned()));
+
+        assert!(
+            fires,
+            "`{}` has no firing fixture across RULE_FIXTURES x {TRIPLES:?}",
+            entry.id
+        );
+        assert!(
+            quiet,
+            "`{}` has no quiet fixture across RULE_FIXTURES x {TRIPLES:?}",
+            entry.id
+        );
     }
 }
 
