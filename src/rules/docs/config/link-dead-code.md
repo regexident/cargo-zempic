@@ -35,6 +35,16 @@ to the project, so in both cases the finding still fires but drops to
 report-only: the change is real, but it is the user's to make, not a safe
 automated edit.
 
+## Effect on section garbage collection
+
+Setting `-C link-dead-code` also suppresses rustc's own default request that
+the linker discard unreferenced sections, because the flag exists to keep
+instrumentation-only symbols alive and a linker cannot tell those apart from
+anything else nothing calls. Removing the flag is therefore also what restores
+section garbage collection. `config/link-gc-sections` reports that consequence
+separately, so the linker-level effect is visible even to a reader who only
+sees one of the two findings.
+
 ## Tradeoff
 
 The flag increases the artifact's size for no benefit outside a coverage run,

@@ -270,6 +270,225 @@ impl Rule for LinkDeadCodeRule {
     }
 }
 
+/// The linker family a target triple resolves to, so far as its substrings
+/// reveal.
+///
+/// Classification reads only the triple's text; it never inspects a linker
+/// binary or a `cc` invocation. [`Unknown`](Self::Unknown) is the honest
+/// answer for a triple this crate's substring table does not cover, rather
+/// than a guess at a linker that might not apply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinkerFamily {
+    /// A Unix-like target linked with an ELF linker such as GNU `ld` or
+    /// `lld`.
+    Elf,
+    /// An Apple target linked with Apple's `ld`.
+    MachO,
+    /// A Windows target linked with the MSVC linker.
+    Msvc,
+    /// A WebAssembly target linked with `wasm-ld`.
+    Wasm,
+    /// A triple whose linker this crate does not classify.
+    Unknown,
+}
+
+/// Classify `target_triple` by the linker rustc hands its output to.
+///
+/// The order below is load-bearing: `windows-msvc` is checked before the ELF
+/// arm's `windows-gnu` substring, so an MSVC triple is never misclassified as
+/// an ELF one.
+fn linker_family(target_triple: &str) -> LinkerFamily {
+    if target_triple.contains("-apple-") {
+        LinkerFamily::MachO
+    } else if target_triple.contains("windows-msvc") {
+        LinkerFamily::Msvc
+    } else if target_triple.contains("wasm") {
+        LinkerFamily::Wasm
+    } else if [
+        "linux",
+        "windows-gnu",
+        "android",
+        "freebsd",
+        "netbsd",
+        "openbsd",
+        "dragonfly",
+        "solaris",
+        "illumos",
+        "fuchsia",
+        "redox",
+    ]
+    .iter()
+    .any(|substring| target_triple.contains(substring))
+    {
+        LinkerFamily::Elf
+    } else {
+        LinkerFamily::Unknown
+    }
+}
+
+/// The rustflag that requests linker section garbage collection for `family`,
+/// or `None` when the family's own spelling is not known.
+fn section_garbage_collection_flag(family: LinkerFamily) -> Option<&'static str> {
+    match family {
+        LinkerFamily::Elf => Some("-C link-arg=-Wl,--gc-sections"),
+        LinkerFamily::MachO => Some("-C link-arg=-Wl,-dead_strip"),
+        LinkerFamily::Msvc => Some("-C link-arg=/OPT:REF"),
+        LinkerFamily::Wasm => Some("-C link-arg=--gc-sections"),
+        LinkerFamily::Unknown => None,
+    }
+}
+
+/// Whether rustc passes `family`'s linker a section-garbage-collection flag
+/// of its own accord, absent `-C link-dead-code`.
+///
+/// Every classified family defaults to garbage-collecting unreferenced
+/// sections; only [`LinkerFamily::Unknown`] carries no such default to claim.
+fn performs_section_garbage_collection_by_default(family: LinkerFamily) -> bool {
+    family != LinkerFamily::Unknown
+}
+
+/// Reports a linker that retains sections nothing references, because
+/// rustc's own section-garbage-collection default is either suppressed or
+/// unknown to this crate.
+///
+/// rustc passes `--gc-sections` to an ELF linker and `-dead_strip` to a
+/// Mach-O one on its own, without cargo or the user asking for it, and stops
+/// doing so under `-C link-dead-code` — the same flag [`LinkDeadCodeRule`]
+/// reports. This rule is therefore quiet on a project that sets no flag at
+/// all on a target it can classify: the absence of an explicit flag is not
+/// evidence of anything, because the default already applies. It fires only
+/// when that default is suppressed, or when the resolved target's linker is
+/// one this crate does not classify and so cannot claim a default for.
+pub struct LinkGcSectionsRule;
+
+/// The instance registered for [`LinkGcSectionsRule`].
+pub const LINK_GC_SECTIONS_RULE: LinkGcSectionsRule = LinkGcSectionsRule;
+
+impl Rule for LinkGcSectionsRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        let metadata = registered("config/link-gc-sections");
+        let mut findings = Vec::new();
+
+        for (package, resolved) in context.cargo_configs {
+            if !config_rules_apply(context, package) {
+                continue;
+            }
+
+            let explicit_flag_present = crate::cargo_config::link_arguments(&resolved.flags)
+                .iter()
+                .any(|argument| {
+                    let lowered = argument.to_ascii_lowercase();
+                    lowered.contains("--gc-sections")
+                        || lowered.contains("-dead_strip")
+                        || lowered.contains("/opt:ref")
+                });
+
+            if explicit_flag_present {
+                continue;
+            }
+
+            let dead_code_live =
+                crate::cargo_config::flag_enabled(&resolved.flags, "link-dead-code");
+            let family = linker_family(context.target_triple);
+            let unclassified = family == LinkerFamily::Unknown;
+
+            if !dead_code_live && !unclassified {
+                continue;
+            }
+
+            debug_assert!(
+                dead_code_live || !performs_section_garbage_collection_by_default(family),
+                "an unclassified family is the only remaining reason to fire here"
+            );
+
+            let cfg_table_unevaluated_in_live_rank =
+                resolved.source == RustflagsSource::TargetTables && resolved.cfg_tables_unevaluated;
+
+            // Dead-code-live outranks an unclassified target: once rustc's own
+            // default is suppressed by `-C link-dead-code`, that is the cause
+            // reported here, regardless of whether the target is also unclassified.
+            let confidence = if dead_code_live {
+                if cfg_table_unevaluated_in_live_rank {
+                    Confidence::Medium
+                } else {
+                    Confidence::High
+                }
+            } else if unclassified {
+                Confidence::Medium
+            } else {
+                Confidence::High
+            };
+
+            let location = resolved
+                .live
+                .first()
+                .map(|entry| entry.key.clone())
+                .unwrap_or_else(|| {
+                    intended_span(&context.resolution.workspace_root, "build.rustflags")
+                });
+
+            let fixability = if matches!(resolved.source, RustflagsSource::Environment { .. }) {
+                Fixability::ReportOnly
+            } else {
+                metadata.fixability
+            };
+
+            let recommended_flag = section_garbage_collection_flag(family);
+            let change = recommended_flag.map(|flag| Change {
+                current: "unset".to_owned(),
+                recommended: flag.to_owned(),
+            });
+
+            let detail = if !dead_code_live && unclassified {
+                format!(
+                    "The resolved target `{}` is not a linker family this tool \
+                     classifies, so it cannot claim rustc's usual \
+                     section-garbage-collection default applies here.",
+                    context.target_triple
+                )
+            } else {
+                let live_description = match &resolved.source {
+                    RustflagsSource::Environment { variable } => {
+                        format!("the `{}` environment variable", variable.as_str())
+                    }
+                    RustflagsSource::TargetTables | RustflagsSource::BuildTable => {
+                        let entry = live_entry_carrying_link_dead_code(&resolved.live);
+
+                        format!("`{}` in `{}`", entry.key.key, entry.key.file)
+                    }
+                    RustflagsSource::Unset => unreachable!(
+                        "`Unset` carries no flags, so `flag_enabled` on it is always false \
+                         and this arm is never reached"
+                    ),
+                };
+
+                format!(
+                    "{live_description} sets `-C link-dead-code`, which suppresses rustc's \
+                     own section-garbage-collection default. `config/link-dead-code` reports \
+                     the flag itself; this finding reports the linker consequence and the \
+                     flag that restores the behavior."
+                )
+            };
+
+            findings.push(build(
+                metadata,
+                Some(package.clone()),
+                confidence,
+                fixability,
+                change,
+                Some(location),
+                "The linker retains unreferenced sections",
+                detail,
+                "Platform-specific: `--gc-sections` on ELF, `-dead_strip` on Mach-O. Like \
+                 any rustflags change, adding it invalidates the whole build cache, costing \
+                 a full rebuild.",
+            ));
+        }
+
+        findings
+    }
+}
+
 /// The registered metadata for `id`.
 ///
 /// # Panics

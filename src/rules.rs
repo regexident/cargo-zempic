@@ -256,6 +256,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             summary: "Reporting a build that retains dead code",
             documentation: include_str!("rules/docs/config/link-dead-code.md"),
         },
+        RuleMetadata {
+            rule: &crate::rules::config::LINK_GC_SECTIONS_RULE,
+            id: "config/link-gc-sections",
+            tier: crate::finding::Tier::Compiler,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::Consequential,
+            summary: "Reporting a linker that retains unreferenced sections",
+            documentation: include_str!("rules/docs/config/link-gc-sections.md"),
+        },
     ];
 
     REGISTRY

@@ -2407,6 +2407,7 @@ fn registry_covers_every_profile_and_workspace_assignment() {
 
     let expected = [
         "config/link-dead-code",
+        "config/link-gc-sections",
         "config/rustflags-shadowed",
         "profile/codegen-units",
         "profile/debug-assertions",
@@ -2687,5 +2688,110 @@ fn link_dead_code_ignores_a_shadowed_flag() {
         !finding_rules(&findings).contains(&"config/link-dead-code".to_owned()),
         "a flag shadowed by a higher-ranked source must not fire: {:?}",
         finding_rules(&findings)
+    );
+}
+
+// MARK: config/link-gc-sections
+
+#[test]
+fn link_gc_sections_fires_when_dead_code_suppresses_the_default() {
+    use cargo_zempic::finding::{Confidence, Fixability, Magnitude, Severity, Tier};
+
+    let findings = findings_for("link-dead-code", Some("x86_64-unknown-linux-gnu"));
+    let finding = finding_for(&findings, "config/link-gc-sections");
+
+    assert_eq!(finding.tier, Tier::Compiler);
+    assert_eq!(finding.severity, Severity::Medium);
+    assert_eq!(finding.magnitude, Magnitude::Moderate);
+    assert_eq!(finding.fixability, Fixability::Consequential);
+    assert_eq!(finding.confidence, Confidence::High);
+
+    let change = finding
+        .change
+        .as_ref()
+        .expect("the finding recommends the target's own section-gc flag");
+    assert_eq!(change.current, "unset");
+    assert_eq!(change.recommended, "-C link-arg=-Wl,--gc-sections");
+
+    assert!(
+        finding.detail.contains("config/link-dead-code"),
+        "the detail must name the companion rule: {}",
+        finding.detail
+    );
+    assert!(
+        finding.tradeoff.contains("rebuild"),
+        "the tradeoff must note the full rebuild cost: {}",
+        finding.tradeoff
+    );
+
+    // Plausible bug: implementing §9.2's condition literally and recommending
+    // a generic flag rather than the resolved target's own spelling.
+    let darwin_findings = findings_for("link-dead-code", Some("aarch64-apple-darwin"));
+    let darwin_finding = finding_for(&darwin_findings, "config/link-gc-sections");
+    let darwin_change = darwin_finding
+        .change
+        .as_ref()
+        .expect("the finding recommends the target's own section-gc flag");
+    assert_eq!(darwin_change.recommended, "-C link-arg=-Wl,-dead_strip");
+}
+
+#[test]
+fn link_gc_sections_recommends_the_apple_flag_on_an_apple_target() {
+    let findings = findings_for("link-dead-code", Some("aarch64-apple-darwin"));
+    let finding = finding_for(&findings, "config/link-gc-sections");
+
+    let change = finding
+        .change
+        .as_ref()
+        .expect("the finding recommends the target's own section-gc flag");
+    assert_eq!(change.recommended, "-C link-arg=-Wl,-dead_strip");
+}
+
+#[test]
+fn link_gc_sections_is_quiet_on_a_classified_target() {
+    // `fully-optimized` sets no section-gc flag and no `link-dead-code`, on a
+    // classified host target: rustc's own default already applies.
+    let fully_optimized_findings = findings_for("fully-optimized", None);
+    assert!(
+        !finding_rules(&fully_optimized_findings).contains(&"config/link-gc-sections".to_owned()),
+        "a classified target with no suppressing flag must not fire: {:?}",
+        finding_rules(&fully_optimized_findings)
+    );
+
+    // `rustflags-shadowed` sets no `link-dead-code` either; its live source is
+    // `target.x86_64-unknown-linux-gnu.rustflags`, a classified ELF target.
+    let shadowed_findings = findings_for("rustflags-shadowed", Some("x86_64-unknown-linux-gnu"));
+    assert!(
+        !finding_rules(&shadowed_findings).contains(&"config/link-gc-sections".to_owned()),
+        "a classified target with no suppressing flag must not fire: {:?}",
+        finding_rules(&shadowed_findings)
+    );
+}
+
+#[test]
+fn link_gc_sections_caps_confidence_on_an_unclassified_target() {
+    use cargo_zempic::finding::Confidence;
+
+    // `aarch64-unknown-none` matches none of the recognized linker families.
+    let findings = findings_for("rustflags-shadowed", Some("aarch64-unknown-none"));
+    let finding = finding_for(&findings, "config/link-gc-sections");
+
+    assert_eq!(finding.confidence, Confidence::Medium);
+    assert_eq!(finding.change, None);
+}
+
+#[test]
+fn link_gc_sections_prioritizes_dead_code_over_an_unclassified_target() {
+    use cargo_zempic::finding::Confidence;
+
+    let findings = findings_for("link-dead-code", Some("aarch64-unknown-none"));
+    let finding = finding_for(&findings, "config/link-gc-sections");
+
+    assert_eq!(finding.confidence, Confidence::High);
+    assert!(
+        finding.detail.contains("config/link-dead-code"),
+        "the detail must name the companion rule when the dead-code flag is the true cause, \
+         even on an unclassified target: {}",
+        finding.detail
     );
 }
