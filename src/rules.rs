@@ -1,5 +1,6 @@
 //! The rule registry and the single table that assigns every rule its severity.
 
+pub mod advisory;
 pub mod config;
 pub mod deps;
 pub mod profile;
@@ -125,6 +126,15 @@ impl RuleMetadata {
 /// [`severity_assignments`] rather than stored on the entry.
 pub fn registry() -> &'static [RuleMetadata] {
     const REGISTRY: &[RuleMetadata] = &[
+        RuleMetadata {
+            rule: &crate::rules::advisory::LIB_PROFILE_NOT_APPLICABLE_RULE,
+            id: "advisory/lib-profile-not-applicable",
+            tier: crate::finding::Tier::Advanced,
+            magnitude: crate::finding::Magnitude::None,
+            fixability: crate::finding::Fixability::ReportOnly,
+            summary: "Explaining why profile rules skip a package with no linked artifact",
+            documentation: include_str!("rules/docs/advisory/lib-profile-not-applicable.md"),
+        },
         RuleMetadata {
             rule: &crate::rules::profile::STRIP_RULE,
             id: "profile/strip",

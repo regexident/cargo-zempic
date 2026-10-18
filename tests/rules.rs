@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 23] = [
+const RULE_FIXTURES: [&str; 24] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -128,6 +128,7 @@ const RULE_FIXTURES: [&str; 23] = [
     "default-features",
     "feature-unification",
     "feature-provenance",
+    "library-only",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2419,6 +2420,7 @@ fn registry_covers_every_profile_workspace_and_config_assignment() {
     registered.sort();
 
     let expected = [
+        "advisory/lib-profile-not-applicable",
         "config/link-dead-code",
         "config/link-gc-sections",
         "config/rustflags-shadowed",
@@ -3072,4 +3074,34 @@ fn feature_unification_is_quiet_when_defaults_stay_off() {
     let findings = findings_for("feature-provenance", None);
 
     assert!(!finding_rules(&findings).contains(&"deps/feature-unification".to_owned()));
+}
+
+// MARK: advisory/lib-profile-not-applicable
+
+#[test]
+fn lib_profile_not_applicable_replaces_profile_rules_for_a_library() {
+    use cargo_zempic::finding::{Fixability, Magnitude, Severity, Tier};
+
+    let findings = findings_for("library-only", None);
+    let finding = finding_for(&findings, "advisory/lib-profile-not-applicable");
+
+    assert_eq!(finding.package.as_deref(), Some("library-only"));
+    assert_eq!(finding.tier, Tier::Advanced);
+    assert_eq!(finding.severity, Severity::Info);
+    assert_eq!(finding.magnitude, Magnitude::None);
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert!(finding.title.contains("`release`"), "{}", finding.title);
+    assert!(
+        finding_rules(&findings)
+            .iter()
+            .all(|rule| !rule.starts_with("profile/") && !rule.starts_with("config/")),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn lib_profile_not_applicable_is_quiet_for_a_linked_package() {
+    let findings = findings_for("bare-release", None);
+
+    assert!(!finding_rules(&findings).contains(&"advisory/lib-profile-not-applicable".to_owned()));
 }
