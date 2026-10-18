@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 24] = [
+const RULE_FIXTURES: [&str; 25] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -129,6 +129,7 @@ const RULE_FIXTURES: [&str; 24] = [
     "feature-unification",
     "feature-provenance",
     "library-only",
+    "no-feature-granularity",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2429,6 +2430,7 @@ fn registry_covers_every_profile_workspace_and_config_assignment() {
         "deps/feature-provenance",
         "deps/feature-unification",
         "deps/workspace-resolver",
+        "lib/no-feature-granularity",
         "profile/codegen-units",
         "profile/debug-assertions",
         "profile/debug-info",
@@ -3104,4 +3106,30 @@ fn lib_profile_not_applicable_is_quiet_for_a_linked_package() {
     let findings = findings_for("bare-release", None);
 
     assert!(!finding_rules(&findings).contains(&"advisory/lib-profile-not-applicable".to_owned()));
+}
+
+// MARK: lib/no-feature-granularity
+
+#[test]
+fn no_feature_granularity_fires_for_a_library_with_ten_dependencies() {
+    use cargo_zempic::finding::{Fixability, Severity};
+
+    let findings = findings_for("no-feature-granularity", None);
+    let finding = finding_for(&findings, "lib/no-feature-granularity");
+
+    assert_eq!(finding.package.as_deref(), Some("lib-root"));
+    assert_eq!(finding.severity, Severity::Medium);
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert!(
+        finding.detail.contains("10 direct normal dependencies"),
+        "{}",
+        finding.detail
+    );
+}
+
+#[test]
+fn no_feature_granularity_is_quiet_for_a_library_without_dependencies() {
+    let findings = findings_for("library-only", None);
+
+    assert!(!finding_rules(&findings).contains(&"lib/no-feature-granularity".to_owned()));
 }

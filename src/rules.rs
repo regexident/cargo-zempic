@@ -3,6 +3,7 @@
 pub mod advisory;
 pub mod config;
 pub mod deps;
+pub mod library;
 pub mod profile;
 
 use crate::finding::{RuleId, Selector, Severity};
@@ -323,6 +324,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             fixability: crate::finding::Fixability::ReportOnly,
             summary: "Reporting a feature enabled only because another dependency requested it",
             documentation: include_str!("rules/docs/deps/feature-provenance.md"),
+        },
+        RuleMetadata {
+            rule: &crate::rules::library::NO_FEATURE_GRANULARITY_RULE,
+            id: "lib/no-feature-granularity",
+            tier: crate::finding::Tier::Dependencies,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::ReportOnly,
+            summary: "Reporting a library with many dependencies and no features",
+            documentation: include_str!("rules/docs/lib/no-feature-granularity.md"),
         },
     ];
 
