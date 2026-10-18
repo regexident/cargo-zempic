@@ -463,8 +463,8 @@ fn deduplicate(mut findings: Vec<crate::finding::Finding>) -> Vec<crate::finding
 ///
 /// Changing one entry is intended to be a reviewable diff. An entry may be
 /// either a complete rule identifier or a category selector standing for a
-/// family of rules, which is how the `conflict`, `nightly` and `advisory`
-/// families are written.
+/// family of rules, which is how the `nightly` and `advisory` families are
+/// written.
 pub fn severity_assignments() -> &'static [(&'static str, Severity)] {
     const ASSIGNMENTS: &[(&str, Severity)] = &[
         // High
@@ -475,7 +475,6 @@ pub fn severity_assignments() -> &'static [(&'static str, Severity)] {
         ("config/rustflags-shadowed", Severity::High),
         ("workspace/ignored-member-profile", Severity::High),
         ("deps/workspace-resolver", Severity::High),
-        ("conflict", Severity::High),
         // Medium
         ("profile/lto", Severity::Medium),
         ("profile/incremental", Severity::Medium),
@@ -794,7 +793,7 @@ mod tests {
     fn severity_assignments_cover_the_whole_specification_table() {
         let assignments = severity_assignments();
 
-        assert_eq!(assignments.len(), 29, "the table has twenty-nine entries");
+        assert_eq!(assignments.len(), 28, "the table has twenty-eight entries");
 
         let count = |severity: Severity| {
             assignments
@@ -803,7 +802,7 @@ mod tests {
                 .count()
         };
 
-        assert_eq!(count(Severity::High), 8);
+        assert_eq!(count(Severity::High), 7);
         assert_eq!(count(Severity::Medium), 14);
         assert_eq!(count(Severity::Low), 5);
         assert_eq!(count(Severity::Info), 2);
@@ -817,7 +816,6 @@ mod tests {
 
         for expected in [
             ("profile/opt-level:size", Severity::High),
-            ("conflict", Severity::High),
             ("nightly", Severity::Low),
             ("advisory", Severity::Info),
             ("deps/build-only-note", Severity::Info),
@@ -835,9 +833,47 @@ mod tests {
 
         assert_eq!(severity("profile/strip"), Some(Severity::High));
         assert_eq!(severity("profile/opt-level:size"), Some(Severity::High));
-        assert_eq!(severity("nightly/build-std"), Some(Severity::Low));
-        assert_eq!(severity("advisory/upx"), Some(Severity::Info));
+
+        // A family selector matches by path prefix, so it resolves any
+        // identifier under its first segment whether or not a rule registers
+        // that identifier. The selector `nightly` is a family the table carries,
+        // while the registry carries no `nightly/*` identifier, so the lookup
+        // under it pins the selector itself rather than a registered rule.
+        assert_eq!(severity("nightly/location-detail"), Some(Severity::Low));
+        assert_eq!(
+            severity("advisory/lib-profile-not-applicable"),
+            Some(Severity::Info)
+        );
+
+        // `config/link-dead-code` is matched by both its own entry and the
+        // shorter `config` family, and the longer selector decides.
+        assert_eq!(severity("config/link-dead-code"), Some(Severity::High));
+
         assert_eq!(severity("made-up/rule"), None);
+
+        // Every registered rule under a family selector resolves to the severity
+        // that family assigns. `advisory/lib-profile-not-applicable` is matched
+        // by its own entry as well as by `advisory`, so this also pins that the
+        // specific entry and the family agree for a registered rule.
+        for entry in registry() {
+            let id = RuleId::parse(entry.id)
+                .unwrap_or_else(|error| panic!("`{}` does not parse: {error}", entry.id));
+            let family = id.category();
+
+            let Some((_, family_severity)) = severity_assignments()
+                .iter()
+                .find(|(selector, _)| *selector == family)
+            else {
+                continue;
+            };
+
+            assert_eq!(
+                severity_of(&id),
+                Some(*family_severity),
+                "`{}` must resolve through the `{family}` family",
+                entry.id
+            );
+        }
     }
 
     #[test]
