@@ -953,7 +953,15 @@ fn analysis_of_a_workspace_evaluates_the_registry() {
         })
         .expect("the metadata loads");
 
-    let findings = cargo_zempic::rules::evaluate(&resolution, &metadata, &root_manifest, &[], &[]);
+    let findings = cargo_zempic::rules::evaluate(
+        &resolution,
+        &metadata,
+        &cargo_zempic::knowledge::KnowledgeBase::embedded()
+            .expect("the embedded knowledge base parses"),
+        &root_manifest,
+        &[],
+        &[],
+    );
 
     // A bare release profile leaves `strip` at its cargo default, so the
     // registry's `profile/strip` entry produces a finding.

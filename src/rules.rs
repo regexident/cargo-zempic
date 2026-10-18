@@ -23,6 +23,8 @@ pub struct RuleContext<'a> {
     /// The `cargo metadata` output the workspace was resolved from, filtered to
     /// the resolved target platform.
     pub metadata: &'a cargo_metadata::Metadata,
+    /// The embedded knowledge base extended by the configuration's entries.
+    pub knowledge_base: &'a crate::knowledge::KnowledgeBase,
     /// The parsed workspace root manifest.
     pub root_manifest: &'a crate::manifest::ManifestDocument,
     /// The parsed manifests of the selected members, excluding the root
@@ -365,6 +367,7 @@ pub fn registry() -> &'static [RuleMetadata] {
 pub fn evaluate(
     resolution: &crate::Resolution,
     metadata: &cargo_metadata::Metadata,
+    knowledge_base: &crate::knowledge::KnowledgeBase,
     root_manifest: &crate::manifest::ManifestDocument,
     member_manifests: &[(String, crate::manifest::ManifestDocument)],
     cargo_configs: &[(String, crate::cargo_config::ResolvedRustflags)],
@@ -376,6 +379,7 @@ pub fn evaluate(
             dimension: *dimension,
             resolution,
             metadata,
+            knowledge_base,
             root_manifest,
             member_manifests,
             target_triple: &resolution.target_triple,
@@ -622,6 +626,7 @@ mod tests {
         let resolution = probe_resolution();
         let manifest = probe_manifest();
         let metadata = probe_metadata();
+        let knowledge_base = crate::knowledge::KnowledgeBase::default();
 
         // The neutral rule's identifier carries no dimension, so evaluating it
         // once per selected dimension must yield a single finding.
@@ -633,6 +638,7 @@ mod tests {
                     dimension: *dimension,
                     resolution: &resolution,
                     metadata: &metadata,
+                    knowledge_base: &knowledge_base,
                     root_manifest: &manifest,
                     member_manifests: &[],
                     target_triple: &resolution.target_triple,
@@ -657,6 +663,7 @@ mod tests {
         let resolution = probe_resolution();
         let manifest = probe_manifest();
         let metadata = probe_metadata();
+        let knowledge_base = crate::knowledge::KnowledgeBase::default();
 
         let mut findings = Vec::new();
 
@@ -665,6 +672,7 @@ mod tests {
                 dimension: *dimension,
                 resolution: &resolution,
                 metadata: &metadata,
+                knowledge_base: &knowledge_base,
                 root_manifest: &manifest,
                 member_manifests: &[],
                 target_triple: &resolution.target_triple,

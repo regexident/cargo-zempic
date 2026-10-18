@@ -482,8 +482,9 @@ fn finish(
 /// # Errors
 ///
 /// Returns a [`ZempicError`] when resolution fails, when a configuration file
-/// cannot be read or does not validate, or when a produced finding carries no
-/// tradeoff.
+/// cannot be read or does not validate, when the embedded knowledge base does
+/// not parse (see [`knowledge::KnowledgeBase::embedded`]), or when a produced
+/// finding carries no tradeoff.
 pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
     let (workspace_scope, metadata) = scope(config)?;
 
@@ -499,6 +500,9 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
         .collect();
 
     let file_config = config::discover(&workspace_scope.workspace_root, &package_directories)?;
+
+    let mut knowledge_base = knowledge::KnowledgeBase::embedded()?;
+    knowledge_base.extend(file_config.knowledge_base);
 
     let profile_name = config
         .profile
@@ -550,6 +554,7 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
     let findings = rules::evaluate(
         &resolution,
         &metadata,
+        &knowledge_base,
         &root_manifest,
         &member_manifests,
         &cargo_configs,
