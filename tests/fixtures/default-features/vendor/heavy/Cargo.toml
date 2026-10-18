@@ -1,0 +1,11 @@
+[package]
+name = "heavy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+inner = { path = "../inner", optional = true }
+
+[features]
+default = ["fast"]
+fast = ["dep:inner"]

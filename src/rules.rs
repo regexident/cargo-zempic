@@ -279,6 +279,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             documentation: include_str!("rules/docs/deps/workspace-resolver.md"),
         },
         RuleMetadata {
+            rule: &crate::rules::deps::DEFAULT_FEATURES_RULE,
+            id: "deps/default-features",
+            tier: crate::finding::Tier::Dependencies,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::Consequential,
+            summary: "Reporting a dependency whose default features enable optional dependencies",
+            documentation: include_str!("rules/docs/deps/default-features.md"),
+        },
+        RuleMetadata {
             rule: &crate::rules::deps::DUPLICATE_VERSIONS_RULE,
             id: "deps/duplicate-versions",
             tier: crate::finding::Tier::Dependencies,

@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 20] = [
+const RULE_FIXTURES: [&str; 21] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -125,6 +125,7 @@ const RULE_FIXTURES: [&str; 20] = [
     "link-dead-code",
     "resolver-unset",
     "duplicate-versions",
+    "default-features",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2419,6 +2420,7 @@ fn registry_covers_every_profile_workspace_and_config_assignment() {
         "config/link-dead-code",
         "config/link-gc-sections",
         "config/rustflags-shadowed",
+        "deps/default-features",
         "deps/duplicate-versions",
         "deps/workspace-resolver",
         "profile/codegen-units",
@@ -2929,4 +2931,50 @@ fn duplicate_versions_is_quiet_without_a_duplicate() {
     let findings = findings_for("bare-release", None);
 
     assert!(!finding_rules(&findings).contains(&"deps/duplicate-versions".to_owned()));
+}
+
+// MARK: deps/default-features
+
+#[test]
+fn default_features_fires_when_defaults_enable_an_optional_dependency() {
+    use cargo_zempic::finding::{Confidence, Fixability, Severity};
+
+    let findings = findings_for("default-features", None);
+    let finding = finding_for(&findings, "deps/default-features");
+
+    assert_eq!(finding.package.as_deref(), Some("default-features"));
+    assert_eq!(finding.confidence, Confidence::Medium);
+    assert_eq!(finding.fixability, Fixability::Consequential);
+    assert_eq!(finding.severity, Severity::Medium);
+    assert!(finding.detail.contains("`inner`"), "{}", finding.detail);
+    assert!(
+        finding
+            .detail
+            .contains("Resolver-v2 kind splitting is approximated"),
+        "{}",
+        finding.detail
+    );
+
+    let span = &finding
+        .location
+        .as_ref()
+        .expect("the finding carries a location")
+        .span;
+
+    assert_eq!(span.key, "dependencies.heavy");
+    assert_eq!(span.file.file_name(), Some("Cargo.toml"));
+    // The materialized workspace is removed once `findings_for` returns, so the
+    // manifest cannot be read back; only the root manifest declares the
+    // `heavy` key the span resolved.
+    assert_ne!(
+        span.file.parent().and_then(|parent| parent.file_name()),
+        Some("heavy")
+    );
+}
+
+#[test]
+fn default_features_is_quiet_without_optional_dependencies_behind_defaults() {
+    let findings = findings_for("bare-release", None);
+
+    assert!(!finding_rules(&findings).contains(&"deps/default-features".to_owned()));
 }

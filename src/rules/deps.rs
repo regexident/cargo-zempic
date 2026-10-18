@@ -348,12 +348,274 @@ impl Rule for DuplicateVersionsRule {
     }
 }
 
+/// The features and optional dependencies a set of requested features enables.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct ExpandedFeatures {
+    /// Every feature the request enables, directly or through other features.
+    pub(crate) features: BTreeSet<String>,
+    /// Every optional dependency the request enables.
+    pub(crate) optional_dependencies: BTreeSet<String>,
+}
+
+/// Expand `requested` through `feature_table` following cargo's feature-value
+/// grammar.
+///
+/// A value naming a key of `feature_table` enables that feature and, in turn,
+/// its values. `dep:x` enables the optional dependency `x`, and `x/f` enables
+/// `x` when it is optional. `x?/f` enables nothing by itself, because it only
+/// forwards `f` to `x` when `x` is enabled by other means. A bare name that is
+/// not a key of the table but names an optional dependency is that
+/// dependency's implicit feature and enables it. A requested name that is
+/// neither is ignored.
+///
+/// Each feature is expanded once, so a cyclic table terminates.
+pub(crate) fn expand_features(
+    feature_table: &BTreeMap<String, Vec<String>>,
+    optional_dependencies: &BTreeSet<String>,
+    requested: &[&str],
+) -> ExpandedFeatures {
+    let mut expanded = ExpandedFeatures::default();
+    let mut visited: BTreeSet<String> = BTreeSet::new();
+    let mut pending: Vec<String> = requested.iter().map(|name| (*name).to_owned()).collect();
+
+    while let Some(name) = pending.pop() {
+        if !visited.insert(name.clone()) {
+            continue;
+        }
+
+        let Some(values) = feature_table.get(&name) else {
+            if optional_dependencies.contains(&name) {
+                expanded.optional_dependencies.insert(name);
+            }
+
+            continue;
+        };
+
+        expanded.features.insert(name);
+
+        for value in values {
+            if let Some(dependency) = value.strip_prefix("dep:") {
+                if optional_dependencies.contains(dependency) {
+                    expanded.optional_dependencies.insert(dependency.to_owned());
+                }
+            } else if let Some((dependency, _feature)) = value.split_once('/') {
+                if dependency.ends_with('?') {
+                    continue;
+                }
+
+                if optional_dependencies.contains(dependency) {
+                    expanded.optional_dependencies.insert(dependency.to_owned());
+                }
+            } else {
+                pending.push(value.clone());
+            }
+        }
+    }
+
+    expanded
+}
+
+/// The name `package` declares each of its optional dependencies under.
+///
+/// This is the dependency's `rename` when present, else its package name,
+/// because that is the key its implicit feature and `dep:` references use.
+pub(crate) fn optional_dependency_names(package: &cargo_metadata::Package) -> BTreeSet<String> {
+    package
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.optional)
+        .map(declared_key)
+        .collect()
+}
+
+/// The key `dependency` is declared under in its manifest.
+fn declared_key(dependency: &cargo_metadata::Dependency) -> String {
+    dependency
+        .rename
+        .clone()
+        .unwrap_or_else(|| dependency.name.clone())
+}
+
+/// The metadata packages the run selected, in selection order.
+pub(crate) fn selected_packages<'a>(context: &RuleContext<'a>) -> Vec<&'a cargo_metadata::Package> {
+    let metadata: &'a cargo_metadata::Metadata = context.metadata;
+
+    context
+        .resolution
+        .selected
+        .iter()
+        .filter_map(|selected| {
+            metadata
+                .packages
+                .iter()
+                .find(|package| package.manifest_path == selected.manifest_path)
+        })
+        .collect()
+}
+
+/// The parsed manifest of `package`, when the run holds one.
+///
+/// The root package's manifest is kept apart from the members' manifests, so
+/// the root is matched by path and every other package by name.
+pub(crate) fn manifest_for<'a>(
+    context: &RuleContext<'a>,
+    package: &cargo_metadata::Package,
+) -> Option<&'a ManifestDocument> {
+    if package.manifest_path == context.root_manifest.path() {
+        return Some(context.root_manifest);
+    }
+
+    let member_manifests: &'a [(String, ManifestDocument)] = context.member_manifests;
+
+    member_manifests
+        .iter()
+        .find(|(name, _)| *name == package.name.as_str())
+        .map(|(_, manifest)| manifest)
+}
+
+/// The package `package` reaches through `dependency` as a normal dependency.
+///
+/// The resolve graph names each edge by the dependency's extern crate name,
+/// which is its declared key with `-` replaced by `_`. Returns `None` when the
+/// graph holds no such normal edge, for example when the dependency does not
+/// apply to the resolved target platform.
+pub(crate) fn resolved_dependency<'a>(
+    metadata: &'a cargo_metadata::Metadata,
+    package: &cargo_metadata::Package,
+    dependency: &cargo_metadata::Dependency,
+) -> Option<&'a cargo_metadata::Package> {
+    let node = metadata
+        .resolve
+        .as_ref()?
+        .nodes
+        .iter()
+        .find(|node| node.id == package.id)?;
+
+    let extern_name = declared_key(dependency).replace('-', "_");
+
+    let edge = node.deps.iter().find(|edge| {
+        edge.name == extern_name
+            && edge
+                .dep_kinds
+                .iter()
+                .any(|info| info.kind == cargo_metadata::DependencyKind::Normal)
+    })?;
+
+    metadata
+        .packages
+        .iter()
+        .find(|candidate| candidate.id == edge.pkg)
+}
+
+/// The position of `dependency`'s key in the `[dependencies]` table of
+/// `manifest`.
+///
+/// Returns `None` for a target-specific dependency, which lives under a
+/// `[target.*]` table, and when the manifest is absent or lacks the key.
+pub(crate) fn dependency_location(
+    manifest: Option<&ManifestDocument>,
+    dependency: &cargo_metadata::Dependency,
+) -> Option<KeySpan> {
+    if dependency.target.is_some() {
+        return None;
+    }
+
+    manifest?.key_span(&format!("dependencies.{}", declared_key(dependency)))
+}
+
+/// The sentence appended to every verdict that depends on resolver-v2's
+/// separation of dependency kinds.
+pub(crate) const KIND_SPLITTING_NOTE: &str = "Resolver-v2 kind splitting is approximated: cargo metadata unifies features across normal, build and dev dependencies, so this verdict is not certain.";
+
+/// Reports a dependency declared with default features that enable optional
+/// dependencies of that dependency.
+///
+/// The default set is expanded through the dependency's feature table. A
+/// default set that enables only plain features is not reported, because the
+/// rule has no evidence that those features cost anything.
+pub struct DefaultFeaturesRule;
+
+/// The instance registered for [`DefaultFeaturesRule`].
+pub const DEFAULT_FEATURES_RULE: DefaultFeaturesRule = DefaultFeaturesRule;
+
+impl Rule for DefaultFeaturesRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        let metadata = registered("deps/default-features");
+        let mut findings = Vec::new();
+
+        for package in selected_packages(context) {
+            let manifest = manifest_for(context, package);
+
+            for dependency in &package.dependencies {
+                if dependency.kind != cargo_metadata::DependencyKind::Normal
+                    || !dependency.uses_default_features
+                {
+                    continue;
+                }
+
+                let Some(resolved) = resolved_dependency(context.metadata, package, dependency)
+                else {
+                    continue;
+                };
+
+                if !resolved.features.contains_key("default") {
+                    continue;
+                }
+
+                let expanded = expand_features(
+                    &resolved.features,
+                    &optional_dependency_names(resolved),
+                    &["default"],
+                );
+
+                if expanded.optional_dependencies.is_empty() {
+                    continue;
+                }
+
+                let key = declared_key(dependency);
+
+                let listed = expanded
+                    .optional_dependencies
+                    .iter()
+                    .map(|name| format!("`{name}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let detail = format!(
+                    "The default features of `{key}` enable the optional dependencies {listed}. \
+                     {KIND_SPLITTING_NOTE}"
+                );
+
+                findings.push(build(
+                    metadata,
+                    Some(package.name.to_string()),
+                    Confidence::Medium,
+                    Effort::Moderate,
+                    Fixability::Consequential,
+                    Some(Change {
+                        current: "true".to_owned(),
+                        recommended: "false".to_owned(),
+                    }),
+                    dependency_location(manifest, dependency),
+                    &format!("`{key}` is declared with default features that enable optional dependencies"),
+                    detail,
+                    "Disabling defaults removes every default feature, including ones the code \
+                     may use; each one still needed must be re-enabled by name.",
+                ));
+            }
+        }
+
+        findings
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{compatibility_class, effective_resolver};
+    use super::{compatibility_class, effective_resolver, expand_features};
     use crate::manifest::ManifestDocument;
     use camino::Utf8Path;
     use cargo_metadata::semver::Version;
+    use std::collections::{BTreeMap, BTreeSet};
 
     #[test]
     fn compatibility_class_uses_the_leftmost_non_zero_component() {
@@ -364,6 +626,49 @@ mod tests {
         assert_eq!(class("0.4.7"), (0, 4, 0));
         assert_eq!(class("0.0.3"), (0, 0, 3));
         assert_eq!(class("2.0.0"), (2, 0, 0));
+    }
+
+    #[test]
+    fn expand_features_follows_the_cargo_feature_grammar() {
+        let table: BTreeMap<String, Vec<String>> = [
+            ("default", vec!["fast"]),
+            ("fast", vec!["dep:inner", "extra"]),
+            ("extra", vec![]),
+            ("forward", vec!["inner/f"]),
+            ("weak", vec!["other?/f"]),
+        ]
+        .into_iter()
+        .map(|(name, values)| {
+            (
+                name.to_owned(),
+                values.into_iter().map(str::to_owned).collect(),
+            )
+        })
+        .collect();
+        let optional: BTreeSet<String> = ["inner", "other", "renamed"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let set = |names: &[&str]| -> BTreeSet<String> {
+            names.iter().map(|name| (*name).to_owned()).collect()
+        };
+
+        let defaults = expand_features(&table, &optional, &["default"]);
+        assert_eq!(defaults.features, set(&["default", "fast", "extra"]));
+        assert_eq!(defaults.optional_dependencies, set(&["inner"]));
+
+        let weak = expand_features(&table, &optional, &["weak"]);
+        assert_eq!(weak.optional_dependencies, set(&[]));
+
+        let forward = expand_features(&table, &optional, &["forward"]);
+        assert_eq!(forward.optional_dependencies, set(&["inner"]));
+
+        let implicit = expand_features(&table, &optional, &["renamed"]);
+        assert_eq!(implicit.optional_dependencies, set(&["renamed"]));
+
+        let missing = expand_features(&table, &optional, &["missing"]);
+        assert_eq!(missing.features, set(&[]));
+        assert_eq!(missing.optional_dependencies, set(&[]));
     }
 
     fn resolver_of(text: &str) -> &'static str {
