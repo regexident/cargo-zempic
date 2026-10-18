@@ -1,0 +1,137 @@
+kb_version = 3
+
+[crates.reqwest]
+versions = ">=0.11.2, <0.13"
+verified_through = "0.12.28"
+magnitude = "large"
+
+[[crates.reqwest.features]]
+name = "default-tls"
+default = true
+magnitude = "large"
+advice = "Links native-tls, which uses the platform TLS library and OpenSSL on Linux; the rustls-tls feature is a pure-Rust alternative."
+fixable = true
+
+[crates.regex]
+versions = ">=1.4.5, <2"
+verified_through = "1.13.1"
+magnitude = "moderate"
+
+[[crates.regex.features]]
+name = "unicode"
+default = true
+magnitude = "moderate"
+advice = "Embeds Unicode data tables; disable it when every pattern matches ASCII text only."
+fixable = true
+
+[[crates.regex.features]]
+name = "perf"
+default = true
+magnitude = "moderate"
+advice = "Enables literal and lazy-DFA search optimizations; disable it when matching speed is not critical."
+fixable = true
+
+[crates.env_logger]
+versions = ">=0.11.8, <0.12"
+verified_through = "0.11.11"
+
+[[crates.env_logger.features]]
+name = "regex"
+default = true
+magnitude = "moderate"
+advice = "Filters log directives through the regex crate; disable it when filtering by module path suffices."
+fixable = true
+
+[[crates.env_logger.features]]
+name = "humantime"
+default = true
+magnitude = "small"
+advice = "Formats timestamps through jiff; disable it when log lines need no timestamps."
+fixable = true
+
+[crates.clap]
+versions = ">=4.5.35, <5"
+verified_through = "4.6.7"
+
+[[crates.clap.features]]
+name = "color"
+default = true
+magnitude = "small"
+advice = "Colors help and error output through anstream; disable it when plain output suffices."
+fixable = true
+
+[[crates.clap.features]]
+name = "suggestions"
+default = true
+magnitude = "small"
+advice = "Suggests corrections for mistyped arguments through strsim; disable it when suggestions are not needed."
+fixable = true
+
+[crates.image]
+versions = ">=0.25.9, <0.26"
+verified_through = "0.25.10"
+magnitude = "large"
+
+[[crates.image.features]]
+name = "default-formats"
+default = true
+magnitude = "large"
+advice = "Compiles every image format codec; disable it and enable only the formats the program reads or writes."
+fixable = true
+
+[[crates.image.features]]
+name = "rayon"
+default = true
+magnitude = "moderate"
+advice = "Parallelizes decoding through rayon; disable it when parallel decoding is not needed."
+fixable = true
+
+[crates.tokio]
+versions = ">=1.4.0, <2"
+verified_through = "1.53.2"
+magnitude = "large"
+
+[crates.syn]
+versions = ">=2.0.99, <4"
+verified_through = "3.0.6"
+magnitude = "moderate"
+
+[crates.bindgen]
+versions = ">=0.71.1, <0.73"
+verified_through = "0.72.1"
+magnitude = "large"
+
+[crates.criterion]
+versions = ">=0.5.1, <0.9"
+verified_through = "0.8.2"
+dev_only = true
+
+[crates.proptest]
+versions = ">=1.9.0, <2"
+verified_through = "1.11.0"
+dev_only = true
+
+[crates.insta]
+versions = ">=1.46.2, <2"
+verified_through = "1.49.0"
+dev_only = true
+
+[crates.quickcheck]
+versions = ">=1.1.0, <2"
+verified_through = "1.1.0"
+dev_only = true
+
+[crates.pretty_assertions]
+versions = ">=1.4.1, <2"
+verified_through = "1.4.1"
+dev_only = true
+
+[crates.mockall]
+versions = ">=0.15.0, <0.16"
+verified_through = "0.15.0"
+dev_only = true
+
+[crates.rstest]
+versions = ">=0.27.0, <0.28"
+verified_through = "0.27.0"
+dev_only = true

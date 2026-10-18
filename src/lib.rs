@@ -10,6 +10,7 @@ pub mod cli;
 pub mod config;
 pub mod dimension;
 pub mod finding;
+pub mod knowledge;
 pub mod manifest;
 pub mod profile;
 pub mod report;
@@ -235,6 +236,35 @@ pub enum ZempicError {
         path: camino::Utf8PathBuf,
         /// Underlying TOML failure.
         source: toml_edit::TomlError,
+    },
+
+    /// A knowledge-base document could not be parsed or carried an unknown key.
+    #[error("failed to parse knowledge base `{origin}`: {source}")]
+    KnowledgeBaseParse {
+        /// Where the knowledge base came from, a file path or `<embedded knowledge base>`.
+        origin: String,
+        /// Underlying TOML failure.
+        source: toml_edit::de::Error,
+    },
+
+    /// A knowledge-base document declares a `kb_version` this crate does not accept.
+    #[error("knowledge base declares `kb_version = {found}`, expected {expected}")]
+    KnowledgeBaseVersion {
+        /// The `kb_version` the document declares.
+        found: u32,
+        /// The `kb_version` this crate accepts.
+        expected: u32,
+    },
+
+    /// A knowledge-base entry holds a value that is not valid.
+    #[error("invalid knowledge-base entry `{name}` in `{origin}`: {detail}")]
+    KnowledgeBaseEntry {
+        /// Where the knowledge base came from, a file path or `<embedded knowledge base>`.
+        origin: String,
+        /// The crate name of the invalid entry.
+        name: String,
+        /// What makes the entry invalid.
+        detail: String,
     },
 }
 

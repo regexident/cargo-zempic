@@ -3133,3 +3133,54 @@ fn no_feature_granularity_is_quiet_for_a_library_without_dependencies() {
 
     assert!(!finding_rules(&findings).contains(&"lib/no-feature-granularity".to_owned()));
 }
+
+// MARK: Knowledge base
+
+#[test]
+fn embedded_knowledge_base_parses_with_the_curated_crates() {
+    let base = cargo_zempic::knowledge::KnowledgeBase::embedded()
+        .expect("the embedded knowledge base parses");
+
+    assert_eq!(
+        base.crates().keys().collect::<Vec<_>>(),
+        [
+            "bindgen",
+            "clap",
+            "criterion",
+            "env_logger",
+            "image",
+            "insta",
+            "mockall",
+            "pretty_assertions",
+            "proptest",
+            "quickcheck",
+            "regex",
+            "reqwest",
+            "rstest",
+            "syn",
+            "tokio",
+        ]
+    );
+}
+
+#[test]
+fn embedded_knowledge_base_entries_are_verified_within_their_ranges() {
+    let base = cargo_zempic::knowledge::KnowledgeBase::embedded()
+        .expect("the embedded knowledge base parses");
+
+    for (name, entry) in base.crates() {
+        assert!(entry.versions.matches(&entry.verified_through), "{name}");
+    }
+}
+
+#[test]
+fn embedded_knowledge_base_advice_carries_no_size_figure() {
+    let base = cargo_zempic::knowledge::KnowledgeBase::embedded()
+        .expect("the embedded knowledge base parses");
+
+    for (name, entry) in base.crates() {
+        for feature in &entry.features {
+            common::assert_no_size_figures(&format!("{name}/{}", feature.name), &feature.advice);
+        }
+    }
+}
