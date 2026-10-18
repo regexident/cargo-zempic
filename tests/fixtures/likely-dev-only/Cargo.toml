@@ -1,0 +1,10 @@
+[package]
+name = "likely-dev-only"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bench-harness = { path = "vendor/bench-harness" }
+
+[workspace]
+exclude = ["vendor"]

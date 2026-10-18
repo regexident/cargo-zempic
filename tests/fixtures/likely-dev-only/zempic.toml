@@ -1,0 +1,6 @@
+schema_version = 1
+
+[knowledge_base.crates.bench-harness]
+versions = ">=0.3, <0.4"
+verified_through = "0.3.0"
+dev_only = true

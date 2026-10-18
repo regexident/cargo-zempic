@@ -1006,6 +1006,85 @@ fn trimmable_features<'a>(
         .collect()
 }
 
+/// Reports a crate the knowledge base marks as development-only that a package
+/// declares under `[dependencies]`.
+///
+/// Test, benchmark and example harnesses are almost never needed by shipped
+/// code, yet declaring one as a normal dependency compiles it into every
+/// build. The verdict is a likelihood, not a fact, because the declaring
+/// package may use the crate outside tests.
+pub struct LikelyDevOnlyRule;
+
+/// The instance registered for [`LikelyDevOnlyRule`].
+pub const LIKELY_DEV_ONLY_RULE: LikelyDevOnlyRule = LikelyDevOnlyRule;
+
+impl Rule for LikelyDevOnlyRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        let metadata = registered("deps/likely-dev-only");
+        let mut findings = Vec::new();
+
+        for package in selected_packages(context) {
+            let manifest = manifest_for(context, package);
+
+            for dependency in &package.dependencies {
+                if dependency.kind != cargo_metadata::DependencyKind::Normal {
+                    continue;
+                }
+
+                let Some(resolved) = resolved_dependency(context.metadata, package, dependency)
+                else {
+                    continue;
+                };
+
+                let Some(entry) = context
+                    .knowledge_base
+                    .entry_for(&resolved.name, &resolved.version)
+                else {
+                    continue;
+                };
+
+                if !entry.dev_only {
+                    continue;
+                }
+
+                let key = declared_key(dependency);
+
+                let mut detail = format!(
+                    "`{}` {} is listed in the knowledge base as almost always used only by \
+                     tests, benchmarks or examples, yet `{}` declares it under \
+                     `[dependencies]`, so every build compiles it.",
+                    resolved.name, resolved.version, package.name
+                );
+
+                if entry.is_stale(&resolved.version) {
+                    detail.push(' ');
+                    detail.push_str(&crate::knowledge::stale_note(
+                        &resolved.name,
+                        &entry.verified_through,
+                        &resolved.version,
+                    ));
+                }
+
+                findings.push(build(
+                    metadata,
+                    Some(package.name.to_string()),
+                    Confidence::Medium,
+                    Effort::Moderate,
+                    Fixability::ReportOnly,
+                    None,
+                    dependency_location(manifest, dependency),
+                    &format!("`{key}` is usually a development-only dependency"),
+                    detail,
+                    "Moving it to `[dev-dependencies]` breaks any non-test code that uses it; \
+                     that code must be gated or moved first.",
+                ));
+            }
+        }
+
+        findings
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{compatibility_class, effective_resolver, expand_features, trimmable_features};

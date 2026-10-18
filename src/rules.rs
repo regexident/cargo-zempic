@@ -337,6 +337,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             documentation: include_str!("rules/docs/deps/feature-trim.md"),
         },
         RuleMetadata {
+            rule: &crate::rules::deps::LIKELY_DEV_ONLY_RULE,
+            id: "deps/likely-dev-only",
+            tier: crate::finding::Tier::Dependencies,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::ReportOnly,
+            summary: "Reporting a development-only crate declared as a normal dependency",
+            documentation: include_str!("rules/docs/deps/likely-dev-only.md"),
+        },
+        RuleMetadata {
             rule: &crate::rules::library::NO_FEATURE_GRANULARITY_RULE,
             id: "lib/no-feature-granularity",
             tier: crate::finding::Tier::Dependencies,

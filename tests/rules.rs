@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 27] = [
+const RULE_FIXTURES: [&str; 28] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -132,6 +132,7 @@ const RULE_FIXTURES: [&str; 27] = [
     "no-feature-granularity",
     "feature-trim",
     "knowledge-override",
+    "likely-dev-only",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2457,6 +2458,7 @@ fn registry_covers_every_profile_workspace_and_config_assignment() {
         "deps/feature-provenance",
         "deps/feature-trim",
         "deps/feature-unification",
+        "deps/likely-dev-only",
         "deps/workspace-resolver",
         "lib/no-feature-granularity",
         "profile/codegen-units",
@@ -3308,6 +3310,95 @@ fn feature_trim_is_quiet_when_an_override_excludes_the_version() {
     let findings = findings_with_files("knowledge-override", &[("zempic.toml", &configuration)]);
 
     assert!(!finding_rules(&findings).contains(&"deps/feature-trim".to_owned()));
+}
+
+// MARK: deps/likely-dev-only
+
+/// The `zempic.toml` text of the `likely-dev-only` fixture with the given
+/// version range, verified release and `dev_only` flag.
+fn likely_dev_only_configuration(versions: &str, verified_through: &str, dev_only: bool) -> String {
+    format!(
+        "schema_version = 1\n\
+         \n\
+         [knowledge_base.crates.bench-harness]\n\
+         versions = \"{versions}\"\n\
+         verified_through = \"{verified_through}\"\n\
+         dev_only = {dev_only}\n"
+    )
+}
+
+#[test]
+fn likely_dev_only_fires_on_a_development_crate_in_normal_dependencies() {
+    use cargo_zempic::finding::{Confidence, Fixability, Magnitude, Severity};
+
+    let findings = findings_for("likely-dev-only", None);
+    let finding = finding_for(&findings, "deps/likely-dev-only");
+
+    assert_eq!(finding.package.as_deref(), Some("likely-dev-only"));
+    assert_eq!(finding.severity, Severity::Medium);
+    assert_eq!(finding.magnitude, Magnitude::Moderate);
+    assert_eq!(finding.confidence, Confidence::Medium);
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert!(finding.change.is_none());
+    assert_eq!(
+        finding
+            .location
+            .as_ref()
+            .expect("the finding carries a location")
+            .span
+            .key,
+        "dependencies.bench-harness"
+    );
+    assert_eq!(
+        finding.title,
+        "`bench-harness` is usually a development-only dependency"
+    );
+    assert!(
+        !finding.detail.contains("Advice verified through"),
+        "{}",
+        finding.detail
+    );
+
+    // The same entry without the `dev_only` flag must stay quiet.
+    let configuration = likely_dev_only_configuration(">=0.3, <0.4", "0.3.0", false);
+    let findings = findings_with_files("likely-dev-only", &[("zempic.toml", &configuration)]);
+
+    assert!(!finding_rules(&findings).contains(&"deps/likely-dev-only".to_owned()));
+}
+
+#[test]
+fn likely_dev_only_is_quiet_under_dev_dependencies() {
+    let manifest = "[package]\nname = \"likely-dev-only\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+                    [dev-dependencies]\nbench-harness = { path = \"vendor/bench-harness\" }\n\n\
+                    [workspace]\nexclude = [\"vendor\"]\n";
+    let findings = findings_with_files("likely-dev-only", &[("Cargo.toml", manifest)]);
+
+    assert!(!finding_rules(&findings).contains(&"deps/likely-dev-only".to_owned()));
+}
+
+#[test]
+fn likely_dev_only_is_quiet_without_dependencies() {
+    let findings = findings_for("bare-release", None);
+
+    assert!(!finding_rules(&findings).contains(&"deps/likely-dev-only".to_owned()));
+}
+
+#[test]
+fn likely_dev_only_notes_a_stale_entry() {
+    use cargo_zempic::finding::Fixability;
+
+    let configuration = likely_dev_only_configuration(">=0.2, <0.4", "0.2.0", true);
+    let findings = findings_with_files("likely-dev-only", &[("zempic.toml", &configuration)]);
+    let finding = finding_for(&findings, "deps/likely-dev-only");
+
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert!(
+        finding
+            .detail
+            .ends_with("Advice verified through bench-harness 0.2.0; you have 0.3.0."),
+        "{}",
+        finding.detail
+    );
 }
 
 // MARK: advisory/lib-profile-not-applicable
