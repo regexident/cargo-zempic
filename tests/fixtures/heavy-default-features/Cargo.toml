@@ -1,0 +1,17 @@
+[package]
+name = "heavy-default-features"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+engine = { path = "vendor/engine", optional = true }
+
+[features]
+default = ["fast"]
+fast = ["dep:engine"]
+
+[workspace]
+exclude = ["vendor"]

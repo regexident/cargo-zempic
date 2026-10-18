@@ -77,6 +77,109 @@ impl Rule for NoFeatureGranularityRule {
     }
 }
 
+/// Reports a library whose `default` feature set enables a heavy optional
+/// dependency.
+///
+/// Every consumer that keeps default features compiles the dependency, whether
+/// or not it uses the code that needs it. An optional dependency that the
+/// analyzed feature selection does not resolve is skipped, because its version,
+/// and so its knowledge-base entry, is unknown.
+pub struct HeavyDefaultFeaturesRule;
+
+/// The instance registered for [`HeavyDefaultFeaturesRule`].
+pub const HEAVY_DEFAULT_FEATURES_RULE: HeavyDefaultFeaturesRule = HeavyDefaultFeaturesRule;
+
+impl Rule for HeavyDefaultFeaturesRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        let metadata = registered("lib/heavy-default-features");
+        let mut findings = Vec::new();
+
+        for package in crate::rules::deps::selected_packages(context) {
+            let produces_linked_artifact = context
+                .resolution
+                .selected
+                .iter()
+                .find(|selected| selected.manifest_path == package.manifest_path)
+                .is_some_and(|selected| selected.classification.produces_linked_artifact());
+
+            if produces_linked_artifact {
+                continue;
+            }
+
+            let enabled = crate::rules::deps::expand_features(
+                &package.features,
+                &crate::rules::deps::optional_dependency_names(package),
+                &["default"],
+            );
+
+            for key in &enabled.optional_dependencies {
+                let Some(dependency) = package.dependencies.iter().find(|dependency| {
+                    dependency.optional
+                        && dependency.kind == cargo_metadata::DependencyKind::Normal
+                        && crate::rules::deps::declared_key(dependency) == *key
+                }) else {
+                    continue;
+                };
+
+                let Some(resolved) =
+                    crate::rules::deps::resolved_dependency(context.metadata, package, dependency)
+                else {
+                    continue;
+                };
+
+                let Some(entry) = context
+                    .knowledge_base
+                    .entry_for(&resolved.name, &resolved.version)
+                else {
+                    continue;
+                };
+
+                let Some(magnitude) = entry.magnitude.filter(|_| entry.is_heavy()) else {
+                    continue;
+                };
+
+                let name = &package.name;
+
+                let mut detail = format!(
+                    "The `default` feature set of `{name}` enables the optional dependency \
+                     `{key}`, which resolves to `{}` {} and is marked {} in the knowledge \
+                     base, so every consumer that keeps default features compiles it.",
+                    resolved.name,
+                    resolved.version,
+                    magnitude.as_str()
+                );
+
+                if entry.is_stale(&resolved.version) {
+                    detail.push(' ');
+                    detail.push_str(&crate::knowledge::stale_note(
+                        &resolved.name,
+                        &entry.verified_through,
+                        &resolved.version,
+                    ));
+                }
+
+                let mut finding = build(
+                    metadata,
+                    Some(name.to_string()),
+                    &format!("Default features of `{name}` enable the heavy dependency `{key}`"),
+                    detail,
+                    "Removing it from the default set is a breaking change for consumers that \
+                     rely on it without naming the feature.",
+                );
+
+                finding.magnitude = magnitude;
+                finding.location = crate::rules::deps::manifest_for(context, package)
+                    .and_then(|manifest| manifest.key_span("features.default"))
+                    .map(crate::finding::Location::new);
+
+                findings.push(finding);
+            }
+        }
+
+        findings
+    }
+}
+
 /// The registered metadata for `id`.
 ///
 /// # Panics

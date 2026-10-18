@@ -346,6 +346,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             documentation: include_str!("rules/docs/deps/likely-dev-only.md"),
         },
         RuleMetadata {
+            rule: &crate::rules::library::HEAVY_DEFAULT_FEATURES_RULE,
+            id: "lib/heavy-default-features",
+            tier: crate::finding::Tier::Dependencies,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::ReportOnly,
+            summary: "Reporting a library whose default features enable a heavy optional dependency",
+            documentation: include_str!("rules/docs/lib/heavy-default-features.md"),
+        },
+        RuleMetadata {
             rule: &crate::rules::library::NO_FEATURE_GRANULARITY_RULE,
             id: "lib/no-feature-granularity",
             tier: crate::finding::Tier::Dependencies,

@@ -429,7 +429,7 @@ pub(crate) fn optional_dependency_names(package: &cargo_metadata::Package) -> BT
 }
 
 /// The key `dependency` is declared under in its manifest.
-fn declared_key(dependency: &cargo_metadata::Dependency) -> String {
+pub(crate) fn declared_key(dependency: &cargo_metadata::Dependency) -> String {
     dependency
         .rename
         .clone()

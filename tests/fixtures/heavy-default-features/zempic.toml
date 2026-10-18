@@ -1,0 +1,6 @@
+schema_version = 1
+
+[knowledge_base.crates.engine]
+versions = ">=0.4, <0.5"
+verified_through = "0.4.0"
+magnitude = "large"

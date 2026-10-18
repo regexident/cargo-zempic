@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 28] = [
+const RULE_FIXTURES: [&str; 29] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -133,6 +133,7 @@ const RULE_FIXTURES: [&str; 28] = [
     "feature-trim",
     "knowledge-override",
     "likely-dev-only",
+    "heavy-default-features",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2460,6 +2461,7 @@ fn registry_covers_every_profile_workspace_and_config_assignment() {
         "deps/feature-unification",
         "deps/likely-dev-only",
         "deps/workspace-resolver",
+        "lib/heavy-default-features",
         "lib/no-feature-granularity",
         "profile/codegen-units",
         "profile/debug-assertions",
@@ -3429,6 +3431,247 @@ fn lib_profile_not_applicable_is_quiet_for_a_linked_package() {
     let findings = findings_for("bare-release", None);
 
     assert!(!finding_rules(&findings).contains(&"advisory/lib-profile-not-applicable".to_owned()));
+}
+
+// MARK: lib/heavy-default-features
+
+/// The `Cargo.toml` text of the `heavy-default-features` fixture with the given
+/// `[dependencies]`-style sections and `[features]` body.
+fn heavy_default_features_manifest(dependency_sections: &str, features: &str) -> String {
+    format!(
+        "[package]\nname = \"heavy-default-features\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [lib]\npath = \"src/lib.rs\"\n\n\
+         {dependency_sections}\n\
+         [features]\n{features}\n\
+         [workspace]\nexclude = [\"vendor\"]\n"
+    )
+}
+
+/// The `zempic.toml` text of the `heavy-default-features` fixture with the
+/// given entry fields; `magnitude` is omitted when `None`.
+fn heavy_default_features_configuration(
+    versions: &str,
+    verified_through: &str,
+    magnitude: Option<&str>,
+) -> String {
+    let magnitude = magnitude
+        .map(|text| format!("magnitude = \"{text}\"\n"))
+        .unwrap_or_default();
+
+    format!(
+        "schema_version = 1\n\
+         \n\
+         [knowledge_base.crates.engine]\n\
+         versions = \"{versions}\"\n\
+         verified_through = \"{verified_through}\"\n\
+         {magnitude}"
+    )
+}
+
+/// The findings a named fixture produces after `files` overwrite or extend it,
+/// with the analysis pinned to `target`.
+fn findings_with_files_for_target(
+    fixture: &str,
+    files: &[(&str, &str)],
+    target: &str,
+) -> Vec<cargo_zempic::finding::Finding> {
+    let workspace = common::Fixture::new(fixture).materialize();
+
+    for (relative_path, contents) in files {
+        std::fs::write(workspace.root().join(relative_path), contents)
+            .expect("the fixture file is written");
+    }
+
+    let mut config = analyze_config(&workspace, &[]);
+    config.target = Some(target.to_owned());
+
+    cargo_zempic::analyze(&config)
+        .expect("the analysis succeeds")
+        .findings
+}
+
+#[test]
+fn heavy_default_features_fires_when_defaults_enable_a_heavy_dependency() {
+    use cargo_zempic::finding::{Confidence, Fixability, Magnitude, Severity};
+
+    let findings = findings_for("heavy-default-features", None);
+    let finding = finding_for(&findings, "lib/heavy-default-features");
+
+    assert_eq!(finding.package.as_deref(), Some("heavy-default-features"));
+    assert_eq!(finding.severity, Severity::Medium);
+    assert_eq!(finding.magnitude, Magnitude::Large);
+    assert_eq!(finding.confidence, Confidence::High);
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert!(finding.change.is_none());
+    assert_eq!(
+        finding
+            .location
+            .as_ref()
+            .expect("the finding carries a location")
+            .span
+            .key,
+        "features.default"
+    );
+    assert_eq!(
+        finding.title,
+        "Default features of `heavy-default-features` enable the heavy dependency `engine`"
+    );
+    assert!(
+        finding.detail.contains("marked large"),
+        "{}",
+        finding.detail
+    );
+    assert!(
+        !finding.detail.contains("Advice verified through"),
+        "{}",
+        finding.detail
+    );
+
+    // The finding carries the entry's magnitude, not a fixed one.
+    let configuration =
+        heavy_default_features_configuration(">=0.4, <0.5", "0.4.0", Some("moderate"));
+    let findings =
+        findings_with_files("heavy-default-features", &[("zempic.toml", &configuration)]);
+    let finding = finding_for(&findings, "lib/heavy-default-features");
+
+    assert_eq!(finding.magnitude, Magnitude::Moderate);
+    assert!(
+        finding.detail.contains("marked moderate"),
+        "{}",
+        finding.detail
+    );
+
+    // An entry verified against an older release is noted as stale.
+    let configuration = heavy_default_features_configuration(">=0.3, <0.5", "0.3.0", Some("large"));
+    let findings =
+        findings_with_files("heavy-default-features", &[("zempic.toml", &configuration)]);
+    let finding = finding_for(&findings, "lib/heavy-default-features");
+
+    assert!(
+        finding
+            .detail
+            .ends_with("Advice verified through engine 0.3.0; you have 0.4.0."),
+        "{}",
+        finding.detail
+    );
+
+    // A renamed dependency is matched by the key the feature table names.
+    let manifest = heavy_default_features_manifest(
+        "[dependencies]\nmotor = { package = \"engine\", path = \"vendor/engine\", optional = true }\n",
+        "default = [\"fast\"]\nfast = [\"dep:motor\"]\n",
+    );
+    let findings = findings_with_files("heavy-default-features", &[("Cargo.toml", &manifest)]);
+    let finding = finding_for(&findings, "lib/heavy-default-features");
+
+    assert_eq!(
+        finding.title,
+        "Default features of `heavy-default-features` enable the heavy dependency `motor`"
+    );
+    assert!(
+        finding.detail.contains("resolves to `engine` 0.4.0"),
+        "{}",
+        finding.detail
+    );
+
+    // A target-specific dependency is reported when the analyzed target
+    // resolves it.
+    let manifest = heavy_default_features_manifest(
+        "[target.'cfg(windows)'.dependencies]\nengine = { path = \"vendor/engine\", optional = true }\n",
+        "default = [\"fast\"]\nfast = [\"dep:engine\"]\n",
+    );
+    let findings = findings_with_files_for_target(
+        "heavy-default-features",
+        &[("Cargo.toml", &manifest)],
+        "x86_64-pc-windows-msvc",
+    );
+
+    assert!(finding_rules(&findings).contains(&"lib/heavy-default-features".to_owned()));
+}
+
+#[test]
+fn heavy_default_features_is_quiet_for_a_light_dependency() {
+    let rule = "lib/heavy-default-features".to_owned();
+
+    let configuration = heavy_default_features_configuration(">=0.4, <0.5", "0.4.0", Some("small"));
+    let findings =
+        findings_with_files("heavy-default-features", &[("zempic.toml", &configuration)]);
+
+    assert!(!finding_rules(&findings).contains(&rule));
+
+    // An entry without a crate-level magnitude is not heavy.
+    let configuration = heavy_default_features_configuration(">=0.4, <0.5", "0.4.0", None);
+    let findings =
+        findings_with_files("heavy-default-features", &[("zempic.toml", &configuration)]);
+
+    assert!(!finding_rules(&findings).contains(&rule));
+
+    // An entry whose range excludes the resolved version does not apply.
+    let configuration = heavy_default_features_configuration(">=0.5, <0.6", "0.5.0", Some("large"));
+    let findings =
+        findings_with_files("heavy-default-features", &[("zempic.toml", &configuration)]);
+
+    assert!(!finding_rules(&findings).contains(&rule));
+}
+
+#[test]
+fn heavy_default_features_is_quiet_when_defaults_do_not_reach_it() {
+    let rule = "lib/heavy-default-features".to_owned();
+
+    let manifest = heavy_default_features_manifest(
+        "[dependencies]\nengine = { path = \"vendor/engine\", optional = true }\n",
+        "default = []\nfast = [\"dep:engine\"]\n",
+    );
+    let findings = findings_with_files("heavy-default-features", &[("Cargo.toml", &manifest)]);
+
+    assert!(!finding_rules(&findings).contains(&rule));
+
+    // A default set that enables only other features does not reach it either.
+    let manifest = heavy_default_features_manifest(
+        "[dependencies]\nengine = { path = \"vendor/engine\", optional = true }\n",
+        "default = [\"other\"]\nother = []\nfast = [\"dep:engine\"]\n",
+    );
+    let findings = findings_with_files("heavy-default-features", &[("Cargo.toml", &manifest)]);
+
+    assert!(!finding_rules(&findings).contains(&rule));
+
+    // An optional build dependency is not compiled into consumers.
+    let manifest = heavy_default_features_manifest(
+        "[build-dependencies]\nengine = { path = \"vendor/engine\", optional = true }\n",
+        "default = [\"fast\"]\nfast = [\"dep:engine\"]\n",
+    );
+    let findings = findings_with_files("heavy-default-features", &[("Cargo.toml", &manifest)]);
+
+    assert!(!finding_rules(&findings).contains(&rule));
+
+    // A dependency the analyzed target does not resolve has no known version.
+    let manifest = heavy_default_features_manifest(
+        "[target.'cfg(windows)'.dependencies]\nengine = { path = \"vendor/engine\", optional = true }\n",
+        "default = [\"fast\"]\nfast = [\"dep:engine\"]\n",
+    );
+    let findings = findings_with_files_for_target(
+        "heavy-default-features",
+        &[("Cargo.toml", &manifest)],
+        "x86_64-unknown-linux-gnu",
+    );
+
+    assert!(!finding_rules(&findings).contains(&rule));
+}
+
+#[test]
+fn heavy_default_features_is_quiet_for_a_library_without_dependencies() {
+    let rule = "lib/heavy-default-features".to_owned();
+
+    let findings = findings_for("library-only", None);
+
+    assert!(!finding_rules(&findings).contains(&rule));
+
+    // A package that produces a linked artifact is not a library.
+    let findings = findings_with_files(
+        "heavy-default-features",
+        &[("src/main.rs", "fn main() {}\n")],
+    );
+
+    assert!(!finding_rules(&findings).contains(&rule));
 }
 
 // MARK: lib/no-feature-granularity
