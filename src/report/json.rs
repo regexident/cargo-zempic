@@ -38,6 +38,7 @@ pub fn render(report: &Report) -> crate::Result<String> {
 struct Document {
     schema_version: u32,
     zempic_version: &'static str,
+    kb_version: u32,
     workspace_root: String,
     profile: String,
     dimensions: Vec<&'static str>,
@@ -55,6 +56,7 @@ impl Document {
         Self {
             schema_version: SCHEMA_VERSION,
             zempic_version: env!("CARGO_PKG_VERSION"),
+            kb_version: crate::knowledge::KNOWLEDGE_BASE_VERSION,
             workspace_root: root.clone().into_string(),
             profile: report.resolution.profile.name.clone(),
             dimensions: report

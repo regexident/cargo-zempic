@@ -1674,12 +1674,12 @@ fn json_document_splits_the_rule_path_from_its_dimension() {
 }
 
 #[test]
-fn json_document_omits_the_knowledge_base_version() {
+fn json_document_carries_the_knowledge_base_version() {
     let report = json_report();
     let document = cargo_zempic::report::json::render(&report).expect("the document renders");
     let parsed: serde_json::Value = serde_json::from_str(&document).expect("the document is JSON");
 
-    assert!(parsed.get("kb_version").is_none(), "{document}");
+    assert_eq!(parsed["kb_version"], 3, "{document}");
     assert_eq!(parsed["schema_version"], 1);
 
     // Every summary count is emitted, including zeros, so a machine consumer

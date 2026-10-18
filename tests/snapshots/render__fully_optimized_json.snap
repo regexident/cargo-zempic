@@ -5,6 +5,7 @@ expression: document
 {
   "schema_version": 1,
   "zempic_version": "0.0.1",
+  "kb_version": 3,
   "workspace_root": "[WORKSPACE_ROOT]",
   "profile": "release",
   "dimensions": [

@@ -2,6 +2,7 @@
   "document": [
     "schema_version",
     "zempic_version",
+    "kb_version",
     "workspace_root",
     "profile",
     "dimensions",
