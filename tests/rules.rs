@@ -2441,8 +2441,8 @@ fn ignored_member_profile_is_quiet_without_a_member_table() {
 // MARK: Registry totality
 
 #[test]
-fn registry_covers_every_profile_workspace_and_config_assignment() {
-    use cargo_zempic::finding::{RuleId, Selector};
+fn registry_covers_every_concrete_assignment() {
+    use cargo_zempic::finding::RuleId;
 
     let mut registered: Vec<String> = cargo_zempic::rules::registry()
         .iter()
@@ -2482,27 +2482,23 @@ fn registry_covers_every_profile_workspace_and_config_assignment() {
 
     assert_eq!(registered, expected, "the registry must hold exactly these");
 
-    // Every `profile/*`, `workspace/*` and `config/*` severity assignment has
-    // a registry entry, so an assignment cannot be left unregistered.
+    // Every concrete severity assignment has a registry entry, so an
+    // assignment cannot be left unregistered.
     for (text, _) in cargo_zempic::rules::severity_assignments() {
-        let selector = Selector::parse(text).expect("the assignment is a selector");
-        let category = text.split(['/', ':']).next().unwrap_or(text);
-
-        if category != "profile" && category != "workspace" && category != "config" {
-            continue;
-        }
-
-        // A family selector such as `profile` names a category, not a rule;
-        // only a concrete identifier needs a registry entry.
+        // A single-segment selector such as `advisory` names a family rather
+        // than a rule; only a concrete identifier needs a registry entry.
         let Ok(id) = RuleId::parse(text) else {
             continue;
         };
+
+        if id.path().len() == 1 {
+            continue;
+        }
 
         assert!(
             cargo_zempic::rules::metadata_for(&id).is_some(),
             "assignment `{text}` has no registered rule"
         );
-        let _ = selector;
     }
 }
 
