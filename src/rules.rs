@@ -305,6 +305,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             summary: "Reporting a default-features opt-out that feature unification defeats",
             documentation: include_str!("rules/docs/deps/feature-unification.md"),
         },
+        RuleMetadata {
+            rule: &crate::rules::deps::FEATURE_PROVENANCE_RULE,
+            id: "deps/feature-provenance",
+            tier: crate::finding::Tier::Dependencies,
+            magnitude: crate::finding::Magnitude::Small,
+            fixability: crate::finding::Fixability::ReportOnly,
+            summary: "Reporting a feature enabled only because another dependency requested it",
+            documentation: include_str!("rules/docs/deps/feature-provenance.md"),
+        },
     ];
 
     REGISTRY

@@ -1,0 +1,4 @@
+[workspace]
+members = ["alpha"]
+resolver = "3"
+exclude = ["vendor"]

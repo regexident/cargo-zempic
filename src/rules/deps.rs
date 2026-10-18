@@ -724,6 +724,168 @@ impl Rule for FeatureUnificationRule {
     }
 }
 
+/// Reports features of a dependency that only other dependencies request.
+///
+/// A feature is enabled when any requester in the graph asks for it. The
+/// features the workspace members ask for themselves, through their
+/// declarations and through their own features that forward to a dependency,
+/// are subtracted from the features the resolved graph enables. What remains
+/// is present only because some other dependency requested it.
+pub struct FeatureProvenanceRule;
+
+/// The instance registered for [`FeatureProvenanceRule`].
+pub const FEATURE_PROVENANCE_RULE: FeatureProvenanceRule = FeatureProvenanceRule;
+
+/// The features of `target` that the workspace members request themselves.
+///
+/// Each direct normal declaration of `target` in a member requests `default`
+/// when it uses default features, plus its listed features. A member feature
+/// whose value forwards a feature to the declaration, as `key/feature` or
+/// `key?/feature`, requests that feature once the member feature is enabled.
+/// Every request is expanded through the feature table of `target`, and both
+/// the features and the optional dependencies it enables count, because an
+/// optional dependency is also a feature of its own.
+fn features_requested_by_members(
+    metadata: &cargo_metadata::Metadata,
+    target: &cargo_metadata::Package,
+) -> BTreeSet<String> {
+    let optional_dependencies = optional_dependency_names(target);
+    let mut requested = BTreeSet::new();
+
+    let Some(resolve) = metadata.resolve.as_ref() else {
+        return requested;
+    };
+
+    for member in metadata
+        .packages
+        .iter()
+        .filter(|member| metadata.workspace_members.contains(&member.id))
+    {
+        let enabled_on_member: BTreeSet<&str> = resolve
+            .nodes
+            .iter()
+            .find(|node| node.id == member.id)
+            .map(|node| {
+                node.features
+                    .iter()
+                    .map(|feature| feature.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for dependency in &member.dependencies {
+            if dependency.kind != cargo_metadata::DependencyKind::Normal
+                || resolved_dependency(metadata, member, dependency)
+                    .is_none_or(|resolved| resolved.id != target.id)
+            {
+                continue;
+            }
+
+            let key = declared_key(dependency);
+            let mut names: Vec<&str> = dependency.features.iter().map(String::as_str).collect();
+
+            if dependency.uses_default_features {
+                names.push("default");
+            }
+
+            for (feature, values) in &member.features {
+                if !enabled_on_member.contains(feature.as_str()) {
+                    continue;
+                }
+
+                for value in values {
+                    let Some((forwarded_to, forwarded)) = value.split_once('/') else {
+                        continue;
+                    };
+
+                    if forwarded_to.trim_end_matches('?') == key {
+                        names.push(forwarded);
+                    }
+                }
+            }
+
+            let expanded = expand_features(&target.features, &optional_dependencies, &names);
+
+            requested.extend(expanded.features);
+            requested.extend(expanded.optional_dependencies);
+        }
+    }
+
+    requested
+}
+
+impl Rule for FeatureProvenanceRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        let metadata = registered("deps/feature-provenance");
+        let mut findings = Vec::new();
+
+        let Some(resolve) = context.metadata.resolve.as_ref() else {
+            return findings;
+        };
+
+        for package in selected_packages(context) {
+            let manifest = manifest_for(context, package);
+
+            for dependency in &package.dependencies {
+                if dependency.kind != cargo_metadata::DependencyKind::Normal {
+                    continue;
+                }
+
+                let Some(resolved) = resolved_dependency(context.metadata, package, dependency)
+                else {
+                    continue;
+                };
+
+                let Some(node) = resolve.nodes.iter().find(|node| node.id == resolved.id) else {
+                    continue;
+                };
+
+                let requested = features_requested_by_members(context.metadata, resolved);
+
+                let only_transitive: BTreeSet<&str> = node
+                    .features
+                    .iter()
+                    .map(|feature| feature.as_str())
+                    .filter(|feature| !requested.contains(*feature))
+                    .collect();
+
+                if only_transitive.is_empty() {
+                    continue;
+                }
+
+                let key = declared_key(dependency);
+
+                let listed = only_transitive
+                    .iter()
+                    .map(|feature| format!("`{feature}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let detail = format!(
+                    "No workspace member requests the enabled features {listed} of `{key}`; \
+                     other dependencies in the graph do. {KIND_SPLITTING_NOTE}"
+                );
+
+                findings.push(build(
+                    metadata,
+                    Some(package.name.to_string()),
+                    Confidence::Medium,
+                    Effort::Moderate,
+                    Fixability::ReportOnly,
+                    None,
+                    dependency_location(manifest, dependency),
+                    &format!("Features of `{key}` are enabled only by other dependencies"),
+                    detail,
+                    "Removing these features means dropping or replacing the dependency that \
+                     requests them, which may lose functionality it provides.",
+                ));
+            }
+        }
+
+        findings
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{compatibility_class, effective_resolver, expand_features};

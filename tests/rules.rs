@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 22] = [
+const RULE_FIXTURES: [&str; 23] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -127,6 +127,7 @@ const RULE_FIXTURES: [&str; 22] = [
     "duplicate-versions",
     "default-features",
     "feature-unification",
+    "feature-provenance",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2423,6 +2424,7 @@ fn registry_covers_every_profile_workspace_and_config_assignment() {
         "config/rustflags-shadowed",
         "deps/default-features",
         "deps/duplicate-versions",
+        "deps/feature-provenance",
         "deps/feature-unification",
         "deps/workspace-resolver",
         "profile/codegen-units",
@@ -3031,4 +3033,43 @@ fn default_features_is_quiet_when_defaults_enable_no_optional_dependency() {
     let findings = findings_for("feature-unification", None);
 
     assert!(!finding_rules(&findings).contains(&"deps/default-features".to_owned()));
+}
+
+// MARK: deps/feature-provenance
+
+#[test]
+fn feature_provenance_fires_for_a_feature_only_a_transitive_dependency_requests() {
+    use cargo_zempic::finding::{Confidence, Magnitude, Severity};
+
+    let findings = findings_for("feature-provenance", None);
+    let finding = finding_for(&findings, "deps/feature-provenance");
+
+    assert_eq!(finding.package.as_deref(), Some("alpha"));
+    assert_eq!(finding.confidence, Confidence::Medium);
+    assert_eq!(finding.magnitude, Magnitude::Small);
+    assert_eq!(finding.severity, Severity::Low);
+    assert!(finding.title.contains("`shared`"), "{}", finding.title);
+    assert!(finding.detail.contains("`extra`"), "{}", finding.detail);
+
+    let span = &finding
+        .location
+        .as_ref()
+        .expect("the finding carries a location")
+        .span;
+
+    assert_eq!(span.key, "dependencies.shared");
+}
+
+#[test]
+fn feature_provenance_is_quiet_when_a_member_requests_the_feature() {
+    let findings = findings_for("feature-unification", None);
+
+    assert!(!finding_rules(&findings).contains(&"deps/feature-provenance".to_owned()));
+}
+
+#[test]
+fn feature_unification_is_quiet_when_defaults_stay_off() {
+    let findings = findings_for("feature-provenance", None);
+
+    assert!(!finding_rules(&findings).contains(&"deps/feature-unification".to_owned()));
 }
