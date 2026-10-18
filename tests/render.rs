@@ -37,6 +37,7 @@ fn rendered_for(fixture: &str, format: Format, target: Option<&str>) -> String {
         gates: cargo_zempic::config::Gates::default(),
         today: cargo_zempic::config::CivilDate::today(),
         environment: cargo_zempic::cargo_config::CargoEnvironment::sealed(workspace.root()),
+        toolchain: Some(cargo_zempic::toolchain::ToolchainChannel::Stable),
     };
 
     let report = analyze(&config).expect("the analysis succeeds");

@@ -42,6 +42,15 @@ pub struct RuleContext<'a> {
     /// directory is one like any other, so excluding it would silently drop
     /// the common case of a single-package workspace.
     pub cargo_configs: &'a [(String, crate::cargo_config::ResolvedRustflags)],
+    /// The toolchain channel the run answers for, either detected from the
+    /// workspace root or injected by the caller.
+    pub toolchain: crate::toolchain::ToolchainChannel,
+    /// Whether the analysis gate lets a nightly-only remedy be applied.
+    ///
+    /// A rule gated on the toolchain channel reads this to decide whether its
+    /// finding is actionable or report-only; the gate itself never suppresses
+    /// a finding.
+    pub allow_nightly: bool,
 }
 
 /// A rule's behavior: the findings one evaluation produces for a workspace.
@@ -399,7 +408,14 @@ pub fn registry() -> &'static [RuleMetadata] {
 ///
 /// `cargo_configs` carries the resolved cargo configuration rustflags for
 /// every selected package, including the root package of a non-virtual
-/// workspace.
+/// workspace. `toolchain` is the channel the run answers for and
+/// `allow_nightly` whether a nightly-only remedy counts as actionable.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "every argument is one distinct input the evaluation reads; a parameter \
+              struct would only move the same names one level down for a function with a \
+              single non-test call site"
+)]
 pub fn evaluate(
     resolution: &crate::Resolution,
     metadata: &cargo_metadata::Metadata,
@@ -407,6 +423,8 @@ pub fn evaluate(
     root_manifest: &crate::manifest::ManifestDocument,
     member_manifests: &[(String, crate::manifest::ManifestDocument)],
     cargo_configs: &[(String, crate::cargo_config::ResolvedRustflags)],
+    toolchain: crate::toolchain::ToolchainChannel,
+    allow_nightly: bool,
 ) -> Vec<crate::finding::Finding> {
     let mut findings = Vec::new();
 
@@ -420,6 +438,8 @@ pub fn evaluate(
             member_manifests,
             target_triple: &resolution.target_triple,
             cargo_configs,
+            toolchain,
+            allow_nightly,
         };
 
         for entry in registry() {
@@ -678,6 +698,8 @@ mod tests {
                     member_manifests: &[],
                     target_triple: &resolution.target_triple,
                     cargo_configs: &[],
+                    toolchain: crate::toolchain::ToolchainChannel::Stable,
+                    allow_nightly: false,
                 };
 
                 findings.extend(NeutralProbe.evaluate(&context));
@@ -712,6 +734,8 @@ mod tests {
                 member_manifests: &[],
                 target_triple: &resolution.target_triple,
                 cargo_configs: &[],
+                toolchain: crate::toolchain::ToolchainChannel::Stable,
+                allow_nightly: false,
             };
 
             findings.extend(NeutralProbe.evaluate(&context));

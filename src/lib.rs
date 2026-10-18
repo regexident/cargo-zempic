@@ -307,6 +307,13 @@ pub struct AnalysisConfig {
     pub today: config::CivilDate,
     /// The process state the cargo configuration chain is resolved against.
     pub environment: cargo_config::CargoEnvironment,
+    /// The toolchain channel the analysis reasons about.
+    ///
+    /// [`None`] detects the channel from the workspace root, so a run answers
+    /// for the toolchain the project actually builds with. [`Some`] injects a
+    /// channel, which lets tests and callers pin the answer instead of
+    /// inheriting the machine's.
+    pub toolchain: Option<crate::toolchain::ToolchainChannel>,
 }
 
 /// A selected package and the classification of its targets.
@@ -549,6 +556,11 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
         ..config::resolve_gates(&config.gates, &file_config.analysis)
     };
 
+    let toolchain = config
+        .toolchain
+        .unwrap_or_else(|| crate::toolchain::active(&workspace_scope.workspace_root));
+    let allow_nightly = effective_gates.allow_nightly.unwrap_or(false);
+
     let root_manifest =
         manifest::ManifestDocument::load(&workspace_scope.workspace_root.join("Cargo.toml"))?;
     let resolution = finish(workspace_scope, &profile_name, dimensions, &root_manifest)?;
@@ -562,6 +574,8 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
         &root_manifest,
         &member_manifests,
         &cargo_configs,
+        toolchain,
+        allow_nightly,
     );
     let filtered = config::filter(findings, &effective_gates, config.today);
 
@@ -706,6 +720,7 @@ mod tests {
             gates: crate::config::Gates::default(),
             today: crate::config::CivilDate::today(),
             environment: CargoEnvironment::default(),
+            toolchain: None,
         };
 
         let query = metadata_query(&config, "aarch64-unknown-linux-gnu");

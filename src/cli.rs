@@ -296,6 +296,7 @@ impl From<&AnalysisArgs> for AnalysisConfig {
             },
             today: crate::config::CivilDate::today(),
             environment: crate::cargo_config::CargoEnvironment::from_process(),
+            toolchain: None,
         }
     }
 }
@@ -470,6 +471,7 @@ mod tests {
                 },
                 today: crate::config::CivilDate::today(),
                 environment: crate::cargo_config::CargoEnvironment::from_process(),
+                toolchain: None,
             }
         );
     }

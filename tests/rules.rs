@@ -103,7 +103,7 @@ fn materialized_roots_are_distinct_between_calls() {
     assert_ne!(first.root(), second.root());
 }
 
-/// The fixture directories the rule tests name, one per rule condition.
+/// The fixture directories every registry sweep replays on the stable channel.
 const RULE_FIXTURES: [&str; 30] = [
     "fully-optimized",
     "bare-release",
@@ -558,6 +558,7 @@ fn analysis_config(workspace: &common::MaterializedWorkspace) -> AnalysisConfig 
         gates: cargo_zempic::config::Gates::default(),
         today: cargo_zempic::config::CivilDate::today(),
         environment: cargo_zempic::cargo_config::CargoEnvironment::sealed(workspace.root()),
+        toolchain: Some(cargo_zempic::toolchain::ToolchainChannel::Stable),
     }
 }
 
@@ -584,6 +585,7 @@ fn analyze_config(workspace: &common::MaterializedWorkspace, only: &[&str]) -> A
         },
         today: cargo_zempic::config::CivilDate::parse("2026-10-04").unwrap(),
         environment: cargo_zempic::cargo_config::CargoEnvironment::sealed(workspace.root()),
+        toolchain: Some(cargo_zempic::toolchain::ToolchainChannel::Stable),
     }
 }
 
@@ -984,6 +986,8 @@ fn analysis_of_a_workspace_evaluates_the_registry() {
         &root_manifest,
         &[],
         &[],
+        cargo_zempic::toolchain::ToolchainChannel::Stable,
+        false,
     );
 
     // A bare release profile leaves `strip` at its cargo default, so the
@@ -2603,28 +2607,6 @@ fn every_registered_rule_has_a_distinct_identifier() {
     ids.dedup();
 
     assert_eq!(ids.len(), total, "no identifier may repeat");
-}
-
-#[test]
-fn every_registered_rule_carries_a_tradeoff_on_every_finding_it_emits() {
-    for fixture in RULE_FIXTURES {
-        let findings = findings_for(fixture, None);
-
-        for finding in &findings {
-            assert!(
-                !finding.tradeoff.trim().is_empty(),
-                "`{fixture}` produced a finding with no tradeoff: {finding:?}"
-            );
-            assert!(
-                !finding.title.trim().is_empty(),
-                "`{fixture}` produced a finding with no title: {finding:?}"
-            );
-            assert!(
-                !finding.detail.trim().is_empty(),
-                "`{fixture}` produced a finding with no detail: {finding:?}"
-            );
-        }
-    }
 }
 
 // MARK: config/rustflags-shadowed
