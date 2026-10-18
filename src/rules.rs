@@ -346,6 +346,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             documentation: include_str!("rules/docs/deps/likely-dev-only.md"),
         },
         RuleMetadata {
+            rule: &crate::rules::deps::BUILD_ONLY_NOTE_RULE,
+            id: "deps/build-only-note",
+            tier: crate::finding::Tier::Dependencies,
+            magnitude: crate::finding::Magnitude::None,
+            fixability: crate::finding::Fixability::ReportOnly,
+            summary: "Noting that the heaviest known dependencies compile only for the host",
+            documentation: include_str!("rules/docs/deps/build-only-note.md"),
+        },
+        RuleMetadata {
             rule: &crate::rules::library::HEAVY_DEFAULT_FEATURES_RULE,
             id: "lib/heavy-default-features",
             tier: crate::finding::Tier::Dependencies,

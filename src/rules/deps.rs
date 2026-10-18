@@ -1085,6 +1085,169 @@ impl Rule for LikelyDevOnlyRule {
     }
 }
 
+/// Notes that the heaviest known dependencies of a package compile only for
+/// the host.
+///
+/// Build scripts and procedural macros run during compilation, so their
+/// dependency trees are compiled for the host and never reach the artifact.
+/// When every heavy crate in a package's graph sits behind such an edge, the
+/// note points optimization effort away from them. A heavy crate that is also
+/// reached through a normal edge from the artifact keeps the note silent.
+pub struct BuildOnlyNoteRule;
+
+/// The instance registered for [`BuildOnlyNoteRule`].
+pub const BUILD_ONLY_NOTE_RULE: BuildOnlyNoteRule = BuildOnlyNoteRule;
+
+impl Rule for BuildOnlyNoteRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        use cargo_metadata::{DependencyKind, PackageId, TargetKind};
+        use std::collections::{HashMap, HashSet};
+
+        let metadata = registered("deps/build-only-note");
+        let mut findings = Vec::new();
+
+        let Some(resolve) = context.metadata.resolve.as_ref() else {
+            return findings;
+        };
+
+        let nodes: HashMap<&PackageId, &cargo_metadata::Node> =
+            resolve.nodes.iter().map(|node| (&node.id, node)).collect();
+        let packages: HashMap<&PackageId, &cargo_metadata::Package> = context
+            .metadata
+            .packages
+            .iter()
+            .map(|package| (&package.id, package))
+            .collect();
+
+        for package in selected_packages(context) {
+            let produces_artifact = context
+                .resolution
+                .selected
+                .iter()
+                .find(|selected| selected.manifest_path == package.manifest_path)
+                .is_some_and(|selected| selected.classification.produces_linked_artifact());
+
+            if !produces_artifact {
+                continue;
+            }
+
+            // Each entry pairs a package with whether it is reached only
+            // through host-compiled edges. A package reached both ways is
+            // visited once per flag, so a target path is never masked by a
+            // host path found first.
+            let mut visited: HashSet<(&PackageId, bool)> = HashSet::new();
+            let mut worklist: Vec<(&PackageId, bool)> = vec![(&package.id, false)];
+            let mut host_only: BTreeMap<(&str, &PackageId), &cargo_metadata::Package> =
+                BTreeMap::new();
+            let mut reaches_target = false;
+
+            while let Some((id, host)) = worklist.pop() {
+                if !visited.insert((id, host)) {
+                    continue;
+                }
+
+                if id != &package.id {
+                    let Some(reached) = packages.get(id) else {
+                        continue;
+                    };
+
+                    let heavy = context
+                        .knowledge_base
+                        .entry_for(&reached.name, &reached.version)
+                        .is_some_and(|entry| entry.is_heavy());
+
+                    if heavy {
+                        if host {
+                            host_only.insert((reached.name.as_str(), id), reached);
+                        } else {
+                            reaches_target = true;
+                        }
+                    }
+                }
+
+                let Some(node) = nodes.get(id) else {
+                    continue;
+                };
+
+                for dependency in &node.deps {
+                    let Some(child) = packages.get(&dependency.pkg) else {
+                        continue;
+                    };
+
+                    let compiles_for_host = child
+                        .targets
+                        .iter()
+                        .any(|target| target.kind.contains(&TargetKind::ProcMacro));
+
+                    for kind in &dependency.dep_kinds {
+                        match kind.kind {
+                            DependencyKind::Normal => {
+                                worklist.push((&dependency.pkg, host || compiles_for_host));
+                            }
+                            DependencyKind::Build => worklist.push((&dependency.pkg, true)),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            if reaches_target || host_only.is_empty() {
+                continue;
+            }
+
+            let crates: Vec<&cargo_metadata::Package> = host_only.into_values().collect();
+
+            let names = crates
+                .iter()
+                .map(|reached| format!("`{}`", reached.name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut detail = format!(
+                "{names} are marked heavy in the knowledge base and are reached only through \
+                 build dependencies or procedural macros, so they compile for the host and add \
+                 nothing to the artifact."
+            );
+
+            for reached in &crates {
+                let Some(entry) = context
+                    .knowledge_base
+                    .entry_for(&reached.name, &reached.version)
+                else {
+                    continue;
+                };
+
+                if entry.is_stale(&reached.version) {
+                    detail.push(' ');
+                    detail.push_str(&crate::knowledge::stale_note(
+                        &reached.name,
+                        &entry.verified_through,
+                        &reached.version,
+                    ));
+                }
+            }
+
+            findings.push(build(
+                metadata,
+                Some(package.name.to_string()),
+                Confidence::High,
+                Effort::Trivial,
+                Fixability::ReportOnly,
+                None,
+                None,
+                &format!(
+                    "The heaviest known dependencies of `{}` compile only for the host",
+                    package.name
+                ),
+                detail,
+                "None; the note points optimization effort away from dependencies that do not \
+                 reach the artifact.",
+            ));
+        }
+
+        findings
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{compatibility_class, effective_resolver, expand_features, trimmable_features};

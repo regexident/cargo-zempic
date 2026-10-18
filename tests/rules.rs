@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 29] = [
+const RULE_FIXTURES: [&str; 30] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -134,6 +134,7 @@ const RULE_FIXTURES: [&str; 29] = [
     "knowledge-override",
     "likely-dev-only",
     "heavy-default-features",
+    "build-only-note",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2454,6 +2455,7 @@ fn registry_covers_every_profile_workspace_and_config_assignment() {
         "config/link-dead-code",
         "config/link-gc-sections",
         "config/rustflags-shadowed",
+        "deps/build-only-note",
         "deps/default-features",
         "deps/duplicate-versions",
         "deps/feature-provenance",
@@ -3401,6 +3403,162 @@ fn likely_dev_only_notes_a_stale_entry() {
         "{}",
         finding.detail
     );
+}
+
+// MARK: deps/build-only-note
+
+/// The `Cargo.toml` text of the `build-only-note` fixture with `extra_dependencies`
+/// appended to its `[dependencies]` table and `extra_sections` after the
+/// build dependencies.
+fn build_only_note_manifest(extra_dependencies: &str, extra_sections: &str) -> String {
+    format!(
+        "[package]\nname = \"build-only-note\"\nversion = \"0.1.0\"\nedition = \"2021\"\nbuild = \"build.rs\"\n\n\
+         [dependencies]\n\
+         derive-helper = {{ path = \"vendor/derive-helper\" }}\n\
+         runtime = {{ path = \"vendor/runtime\" }}\n\
+         {extra_dependencies}\n\
+         [build-dependencies]\n\
+         generator = {{ path = \"vendor/generator\" }}\n\n\
+         {extra_sections}\n\
+         [workspace]\nexclude = [\"vendor\"]\n"
+    )
+}
+
+/// The `zempic.toml` text of the `build-only-note` fixture with one entry per
+/// `(crate, versions, verified_through, magnitude)` tuple.
+fn build_only_note_configuration(entries: &[(&str, &str, &str, &str)]) -> String {
+    let mut text = String::from("schema_version = 1\n");
+
+    for (name, versions, verified_through, magnitude) in entries {
+        text.push_str(&format!(
+            "\n[knowledge_base.crates.{name}]\n\
+             versions = \"{versions}\"\n\
+             verified_through = \"{verified_through}\"\n\
+             magnitude = \"{magnitude}\"\n"
+        ));
+    }
+
+    text
+}
+
+#[test]
+fn build_only_note_fires_when_heavy_crates_compile_only_for_the_host() {
+    use cargo_zempic::finding::{Fixability, Magnitude, Severity};
+
+    let findings = findings_for("build-only-note", None);
+    let finding = finding_for(&findings, "deps/build-only-note");
+
+    assert_eq!(finding.package.as_deref(), Some("build-only-note"));
+    assert_eq!(finding.severity, Severity::Info);
+    assert_eq!(finding.magnitude, Magnitude::None);
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert!(finding.location.is_none());
+    assert!(finding.change.is_none());
+    assert_eq!(
+        finding.title,
+        "The heaviest known dependencies of `build-only-note` compile only for the host"
+    );
+    assert!(
+        finding
+            .detail
+            .starts_with("`generator`, `parser` are marked heavy"),
+        "{}",
+        finding.detail
+    );
+
+    // Development dependencies never compile into the artifact, so declaring
+    // `parser` as one adds no target path to it: `parser` stays reachable only
+    // through the procedural macro and the note is unchanged.
+    let manifest = build_only_note_manifest(
+        "",
+        "[dev-dependencies]\nparser = { path = \"vendor/parser\" }\n",
+    );
+    let findings = findings_with_files("build-only-note", &[("Cargo.toml", &manifest)]);
+    let finding = finding_for(&findings, "deps/build-only-note");
+
+    assert!(
+        finding
+            .detail
+            .starts_with("`generator`, `parser` are marked heavy"),
+        "{}",
+        finding.detail
+    );
+
+    // Entries verified against an older release are noted as stale, in the
+    // order the crates are listed.
+    let configuration = build_only_note_configuration(&[
+        ("generator", ">=0.9, <2", "0.9.0", "large"),
+        ("parser", ">=0.9, <2", "0.9.0", "moderate"),
+    ]);
+    let findings = findings_with_files("build-only-note", &[("zempic.toml", &configuration)]);
+    let finding = finding_for(&findings, "deps/build-only-note");
+
+    assert!(
+        finding.detail.ends_with(
+            "Advice verified through generator 0.9.0; you have 1.0.0. \
+             Advice verified through parser 0.9.0; you have 1.0.0."
+        ),
+        "{}",
+        finding.detail
+    );
+}
+
+#[test]
+fn build_only_note_is_quiet_when_a_heavy_crate_reaches_the_artifact() {
+    let rule = "deps/build-only-note".to_owned();
+
+    // A heavy crate on the target path silences the note.
+    let configuration = build_only_note_configuration(&[
+        ("generator", ">=1.0, <2", "1.0.0", "large"),
+        ("parser", ">=1.0, <2", "1.0.0", "large"),
+        ("runtime", ">=1.0, <2", "1.0.0", "large"),
+    ]);
+    let findings = findings_with_files("build-only-note", &[("zempic.toml", &configuration)]);
+
+    assert!(!finding_rules(&findings).contains(&rule));
+
+    // A crate reached both through a procedural macro and directly still
+    // reaches the artifact, whichever path is walked first.
+    let manifest = build_only_note_manifest("parser = { path = \"vendor/parser\" }\n", "");
+    let findings = findings_with_files("build-only-note", &[("Cargo.toml", &manifest)]);
+
+    assert!(!finding_rules(&findings).contains(&rule));
+
+    // The walk pushes a package's dependencies in name order and pops the last
+    // one first, so `derive-helper` is expanded before `adapter` (which sorts
+    // ahead of it). `parser` is therefore reached on the host path first and on
+    // the target path second; a visited set keyed by package id alone would
+    // discard the second visit and report the note.
+    let manifest = build_only_note_manifest("", "").replace("runtime = { path", "adapter = { path");
+    let adapter = "[package]\nname = \"adapter\"\nversion = \"1.0.0\"\nedition = \"2021\"\n\n\
+                   [dependencies]\nparser = { path = \"../parser\" }\n";
+    let findings = findings_with_files(
+        "build-only-note",
+        &[
+            ("Cargo.toml", &manifest),
+            ("vendor/runtime/Cargo.toml", adapter),
+        ],
+    );
+
+    assert!(!finding_rules(&findings).contains(&rule));
+}
+
+#[test]
+fn build_only_note_is_quiet_without_heavy_crates() {
+    let rule = "deps/build-only-note".to_owned();
+
+    let findings = findings_for("bare-release", None);
+
+    assert!(!finding_rules(&findings).contains(&rule));
+
+    // Dependencies that are not heavy leave nothing to note.
+    let configuration = build_only_note_configuration(&[
+        ("generator", ">=1.0, <2", "1.0.0", "small"),
+        ("parser", ">=1.0, <2", "1.0.0", "small"),
+    ]);
+    let findings = findings_with_files("build-only-note", &[("zempic.toml", &configuration)]);
+
+    assert!(!finding_rules(&findings).contains(&rule));
 }
 
 // MARK: advisory/lib-profile-not-applicable

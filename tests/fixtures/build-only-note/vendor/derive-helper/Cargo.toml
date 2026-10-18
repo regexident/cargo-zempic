@@ -1,0 +1,10 @@
+[package]
+name = "derive-helper"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+parser = { path = "../parser" }

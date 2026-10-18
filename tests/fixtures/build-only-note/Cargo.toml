@@ -1,0 +1,15 @@
+[package]
+name = "build-only-note"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+derive-helper = { path = "vendor/derive-helper" }
+runtime = { path = "vendor/runtime" }
+
+[build-dependencies]
+generator = { path = "vendor/generator" }
+
+[workspace]
+exclude = ["vendor"]
