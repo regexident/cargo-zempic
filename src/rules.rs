@@ -328,6 +328,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             documentation: include_str!("rules/docs/deps/feature-provenance.md"),
         },
         RuleMetadata {
+            rule: &crate::rules::deps::FEATURE_TRIM_RULE,
+            id: "deps/feature-trim",
+            tier: crate::finding::Tier::Dependencies,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::Consequential,
+            summary: "Reporting a default feature the knowledge base marks as trimmable",
+            documentation: include_str!("rules/docs/deps/feature-trim.md"),
+        },
+        RuleMetadata {
             rule: &crate::rules::library::NO_FEATURE_GRANULARITY_RULE,
             id: "lib/no-feature-granularity",
             tier: crate::finding::Tier::Dependencies,

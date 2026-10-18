@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 25] = [
+const RULE_FIXTURES: [&str; 27] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -130,6 +130,8 @@ const RULE_FIXTURES: [&str; 25] = [
     "feature-provenance",
     "library-only",
     "no-feature-granularity",
+    "feature-trim",
+    "knowledge-override",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -591,6 +593,23 @@ fn findings_for(fixture: &str, target: Option<&str>) -> Vec<cargo_zempic::findin
     config.target = target.map(str::to_owned);
 
     cargo_zempic::analyze(&config)
+        .expect("the analysis succeeds")
+        .findings
+}
+
+/// The findings a named fixture produces after `files` overwrite or extend it.
+fn findings_with_files(
+    fixture: &str,
+    files: &[(&str, &str)],
+) -> Vec<cargo_zempic::finding::Finding> {
+    let workspace = common::Fixture::new(fixture).materialize();
+
+    for (relative_path, contents) in files {
+        std::fs::write(workspace.root().join(relative_path), contents)
+            .expect("the fixture file is written");
+    }
+
+    cargo_zempic::analyze(&analyze_config(&workspace, &[]))
         .expect("the analysis succeeds")
         .findings
 }
@@ -2436,6 +2455,7 @@ fn registry_covers_every_profile_workspace_and_config_assignment() {
         "deps/default-features",
         "deps/duplicate-versions",
         "deps/feature-provenance",
+        "deps/feature-trim",
         "deps/feature-unification",
         "deps/workspace-resolver",
         "lib/no-feature-granularity",
@@ -3084,6 +3104,210 @@ fn feature_unification_is_quiet_when_defaults_stay_off() {
     let findings = findings_for("feature-provenance", None);
 
     assert!(!finding_rules(&findings).contains(&"deps/feature-unification".to_owned()));
+}
+
+// MARK: deps/feature-trim
+
+/// The `zempic.toml` text of the `feature-trim` fixture with the given entry
+/// fields.
+fn feature_trim_configuration(versions: &str, verified_through: &str, fixable: bool) -> String {
+    format!(
+        "schema_version = 1\n\
+         \n\
+         [knowledge_base.crates.metrics]\n\
+         versions = \"{versions}\"\n\
+         verified_through = \"{verified_through}\"\n\
+         \n\
+         [[knowledge_base.crates.metrics.features]]\n\
+         name = \"telemetry\"\n\
+         default = true\n\
+         magnitude = \"moderate\"\n\
+         advice = \"disable unless the service exports metrics\"\n\
+         fixable = {fixable}\n"
+    )
+}
+
+/// The `zempic.toml` text that overrides the embedded `regex` entry.
+fn regex_override(versions: &str, verified_through: &str) -> String {
+    format!(
+        "schema_version = 1\n\
+         \n\
+         [knowledge_base.crates.regex]\n\
+         versions = \"{versions}\"\n\
+         verified_through = \"{verified_through}\"\n\
+         \n\
+         [[knowledge_base.crates.regex.features]]\n\
+         name = \"unicode\"\n\
+         default = true\n\
+         magnitude = \"small\"\n\
+         advice = \"Custom advice for the fixture.\"\n\
+         fixable = false\n"
+    )
+}
+
+#[test]
+fn feature_trim_fires_on_a_default_feature_the_knowledge_base_flags() {
+    use cargo_zempic::finding::{Confidence, Fixability, Magnitude, Severity};
+
+    let findings = findings_for("feature-trim", None);
+    let finding = finding_for(&findings, "deps/feature-trim");
+
+    assert_eq!(finding.package.as_deref(), Some("feature-trim"));
+    assert_eq!(finding.severity, Severity::Medium);
+    assert_eq!(finding.magnitude, Magnitude::Moderate);
+    assert_eq!(finding.confidence, Confidence::High);
+    assert_eq!(finding.fixability, Fixability::Consequential);
+    assert_eq!(
+        finding
+            .change
+            .as_ref()
+            .map(|change| (change.current.as_str(), change.recommended.as_str())),
+        Some(("true", "false"))
+    );
+    assert_eq!(
+        finding
+            .location
+            .as_ref()
+            .expect("the finding carries a location")
+            .span
+            .key,
+        "dependencies.metrics"
+    );
+    assert_eq!(
+        finding.title,
+        "Default feature `telemetry` of `metrics` can be trimmed"
+    );
+    assert!(
+        finding
+            .detail
+            .contains("disable unless the service exports metrics"),
+        "{}",
+        finding.detail
+    );
+    assert!(
+        !finding.detail.contains("Advice verified through"),
+        "{}",
+        finding.detail
+    );
+}
+
+#[test]
+fn feature_trim_is_quiet_outside_the_entry_version_range() {
+    let configuration = feature_trim_configuration(">=2.0, <3", "2.0.0", true);
+    let findings = findings_with_files("feature-trim", &[("zempic.toml", &configuration)]);
+
+    assert!(!finding_rules(&findings).contains(&"deps/feature-trim".to_owned()));
+}
+
+#[test]
+fn feature_trim_reports_a_stale_entry_as_report_only() {
+    use cargo_zempic::finding::Fixability;
+
+    let configuration = feature_trim_configuration(">=1.0, <2", "1.1.0", true);
+    let findings = findings_with_files("feature-trim", &[("zempic.toml", &configuration)]);
+    let finding = finding_for(&findings, "deps/feature-trim");
+
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert!(
+        finding
+            .detail
+            .ends_with("Advice verified through metrics 1.1.0; you have 1.2.0."),
+        "{}",
+        finding.detail
+    );
+}
+
+#[test]
+fn feature_trim_reports_an_unfixable_entry_as_report_only() {
+    use cargo_zempic::finding::Fixability;
+
+    let configuration = feature_trim_configuration(">=1.0, <2", "1.2.0", false);
+    let findings = findings_with_files("feature-trim", &[("zempic.toml", &configuration)]);
+    let finding = finding_for(&findings, "deps/feature-trim");
+
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert!(
+        !finding.detail.contains("Advice verified through"),
+        "{}",
+        finding.detail
+    );
+}
+
+#[test]
+fn feature_trim_is_quiet_when_the_feature_is_requested_explicitly() {
+    let manifest = "[package]\nname = \"feature-trim\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+                    [dependencies]\nmetrics = { path = \"vendor/metrics\", features = [\"telemetry\"] }\n\n\
+                    [workspace]\nexclude = [\"vendor\"]\n";
+    let findings = findings_with_files("feature-trim", &[("Cargo.toml", manifest)]);
+
+    assert!(!finding_rules(&findings).contains(&"deps/feature-trim".to_owned()));
+}
+
+#[test]
+fn feature_trim_is_quiet_when_defaults_are_disabled() {
+    let manifest = "[package]\nname = \"feature-trim\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+                    [dependencies]\nmetrics = { path = \"vendor/metrics\", default-features = false }\n\n\
+                    [workspace]\nexclude = [\"vendor\"]\n";
+    let findings = findings_with_files("feature-trim", &[("Cargo.toml", manifest)]);
+
+    assert!(!finding_rules(&findings).contains(&"deps/feature-trim".to_owned()));
+}
+
+#[test]
+fn feature_trim_is_quiet_without_dependencies() {
+    let findings = findings_for("bare-release", None);
+
+    assert!(!finding_rules(&findings).contains(&"deps/feature-trim".to_owned()));
+}
+
+#[test]
+fn feature_trim_applies_the_embedded_entry() {
+    use cargo_zempic::finding::{Fixability, Magnitude};
+
+    let findings = findings_for("knowledge-override", None);
+    let finding = finding_for(&findings, "deps/feature-trim");
+
+    assert_eq!(
+        finding.title,
+        "Default feature `unicode` of `regex` can be trimmed"
+    );
+    assert_eq!(finding.fixability, Fixability::Consequential);
+    assert_eq!(finding.magnitude, Magnitude::Moderate);
+    assert!(
+        finding.detail.contains("Embeds Unicode data tables"),
+        "{}",
+        finding.detail
+    );
+}
+
+#[test]
+fn feature_trim_honors_a_configured_override() {
+    use cargo_zempic::finding::{Fixability, Magnitude};
+
+    let configuration = regex_override(">=1.0, <2", "1.10.0");
+    let findings = findings_with_files("knowledge-override", &[("zempic.toml", &configuration)]);
+    let finding = finding_for(&findings, "deps/feature-trim");
+
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert_eq!(finding.magnitude, Magnitude::Small);
+    assert!(
+        finding.detail.contains("Custom advice for the fixture."),
+        "{}",
+        finding.detail
+    );
+    assert!(
+        !finding.detail.contains("Embeds Unicode data tables"),
+        "{}",
+        finding.detail
+    );
+}
+
+#[test]
+fn feature_trim_is_quiet_when_an_override_excludes_the_version() {
+    let configuration = regex_override(">=2.0, <3", "2.0.0");
+    let findings = findings_with_files("knowledge-override", &[("zempic.toml", &configuration)]);
+
+    assert!(!finding_rules(&findings).contains(&"deps/feature-trim".to_owned()));
 }
 
 // MARK: advisory/lib-profile-not-applicable

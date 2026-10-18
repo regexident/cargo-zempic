@@ -886,9 +886,129 @@ impl Rule for FeatureProvenanceRule {
     }
 }
 
+/// Reports a default feature of a dependency that the knowledge base marks as
+/// trimmable.
+///
+/// The entry matching the resolved version decides which default features are
+/// reported; a feature the declaration requests by name, directly or through
+/// another requested feature, is wanted and is not reported.
+pub struct FeatureTrimRule;
+
+/// The instance registered for [`FeatureTrimRule`].
+pub const FEATURE_TRIM_RULE: FeatureTrimRule = FeatureTrimRule;
+
+impl Rule for FeatureTrimRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        let metadata = registered("deps/feature-trim");
+        let mut findings = Vec::new();
+
+        for package in selected_packages(context) {
+            let manifest = manifest_for(context, package);
+
+            for dependency in &package.dependencies {
+                if dependency.kind != cargo_metadata::DependencyKind::Normal
+                    || !dependency.uses_default_features
+                {
+                    continue;
+                }
+
+                let Some(resolved) = resolved_dependency(context.metadata, package, dependency)
+                else {
+                    continue;
+                };
+
+                let Some(entry) = context
+                    .knowledge_base
+                    .entry_for(&resolved.name, &resolved.version)
+                else {
+                    continue;
+                };
+
+                let optional_dependencies = optional_dependency_names(resolved);
+                let default_features =
+                    expand_features(&resolved.features, &optional_dependencies, &["default"])
+                        .features;
+                let requested: Vec<&str> = dependency.features.iter().map(String::as_str).collect();
+                let requested_features =
+                    expand_features(&resolved.features, &optional_dependencies, &requested)
+                        .features;
+
+                let stale = entry.is_stale(&resolved.version);
+                let key = declared_key(dependency);
+
+                for feature in trimmable_features(entry, &default_features, &requested_features) {
+                    let mut detail = format!(
+                        "`{}` {} enables `{}` through its default features. Advice: {}",
+                        resolved.name, resolved.version, feature.name, feature.advice
+                    );
+
+                    if stale {
+                        detail.push(' ');
+                        detail.push_str(&crate::knowledge::stale_note(
+                            &resolved.name,
+                            &entry.verified_through,
+                            &resolved.version,
+                        ));
+                    }
+
+                    let mut finding = build(
+                        metadata,
+                        Some(package.name.to_string()),
+                        Confidence::High,
+                        Effort::Moderate,
+                        crate::knowledge::effective_fixability(
+                            Fixability::Consequential,
+                            feature.fixable,
+                            stale,
+                        ),
+                        Some(Change {
+                            current: "true".to_owned(),
+                            recommended: "false".to_owned(),
+                        }),
+                        dependency_location(manifest, dependency),
+                        &format!(
+                            "Default feature `{}` of `{key}` can be trimmed",
+                            feature.name
+                        ),
+                        detail,
+                        "Disabling defaults removes every default feature; each one the code \
+                         still needs must be re-enabled by name.",
+                    );
+
+                    finding.magnitude = feature.magnitude;
+                    findings.push(finding);
+                }
+            }
+        }
+
+        findings
+    }
+}
+
+/// The feature entries of `entry` that the default set enables and the
+/// declaration does not request, in entry order.
+///
+/// Only entries flagged `default` qualify, so an entry advising on a
+/// non-default feature never produces a trim.
+fn trimmable_features<'a>(
+    entry: &'a crate::knowledge::CrateEntry,
+    default_features: &BTreeSet<String>,
+    requested_features: &BTreeSet<String>,
+) -> Vec<&'a crate::knowledge::FeatureEntry> {
+    entry
+        .features
+        .iter()
+        .filter(|feature| {
+            feature.default
+                && default_features.contains(&feature.name)
+                && !requested_features.contains(&feature.name)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{compatibility_class, effective_resolver, expand_features};
+    use super::{compatibility_class, effective_resolver, expand_features, trimmable_features};
     use crate::manifest::ManifestDocument;
     use camino::Utf8Path;
     use cargo_metadata::semver::Version;
@@ -946,6 +1066,43 @@ mod tests {
         let missing = expand_features(&table, &optional, &["missing"]);
         assert_eq!(missing.features, set(&[]));
         assert_eq!(missing.optional_dependencies, set(&[]));
+    }
+
+    #[test]
+    fn trimmable_features_exclude_requested_and_non_default_entries() {
+        use crate::finding::Magnitude;
+        use crate::knowledge::{CrateEntry, FeatureEntry};
+
+        let feature = |name: &str, default: bool| FeatureEntry {
+            name: name.to_owned(),
+            default,
+            magnitude: Magnitude::Moderate,
+            advice: "advice".to_owned(),
+            fixable: true,
+        };
+        let entry = CrateEntry {
+            versions: semver::VersionReq::STAR,
+            verified_through: Version::new(1, 0, 0),
+            magnitude: None,
+            dev_only: false,
+            features: vec![
+                feature("alpha", true),
+                feature("beta", true),
+                feature("gamma", false),
+            ],
+        };
+        let set = |names: &[&str]| -> BTreeSet<String> {
+            names.iter().map(|name| (*name).to_owned()).collect()
+        };
+
+        let trimmable =
+            trimmable_features(&entry, &set(&["alpha", "beta", "gamma"]), &set(&["beta"]));
+        let names: Vec<&str> = trimmable
+            .iter()
+            .map(|feature| feature.name.as_str())
+            .collect();
+
+        assert_eq!(names, ["alpha"]);
     }
 
     fn resolver_of(text: &str) -> &'static str {

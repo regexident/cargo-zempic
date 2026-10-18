@@ -1,0 +1,10 @@
+[package]
+name = "feature-trim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+metrics = { path = "vendor/metrics" }
+
+[workspace]
+exclude = ["vendor"]

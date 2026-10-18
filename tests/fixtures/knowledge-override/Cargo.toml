@@ -1,0 +1,10 @@
+[package]
+name = "knowledge-override"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex = { path = "vendor/regex" }
+
+[workspace]
+exclude = ["vendor"]
