@@ -296,6 +296,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             summary: "Reporting a crate resolved at several semver-incompatible versions",
             documentation: include_str!("rules/docs/deps/duplicate-versions.md"),
         },
+        RuleMetadata {
+            rule: &crate::rules::deps::FEATURE_UNIFICATION_RULE,
+            id: "deps/feature-unification",
+            tier: crate::finding::Tier::Dependencies,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::ReportOnly,
+            summary: "Reporting a default-features opt-out that feature unification defeats",
+            documentation: include_str!("rules/docs/deps/feature-unification.md"),
+        },
     ];
 
     REGISTRY

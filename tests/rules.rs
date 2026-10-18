@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 21] = [
+const RULE_FIXTURES: [&str; 22] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -126,6 +126,7 @@ const RULE_FIXTURES: [&str; 21] = [
     "resolver-unset",
     "duplicate-versions",
     "default-features",
+    "feature-unification",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2422,6 +2423,7 @@ fn registry_covers_every_profile_workspace_and_config_assignment() {
         "config/rustflags-shadowed",
         "deps/default-features",
         "deps/duplicate-versions",
+        "deps/feature-unification",
         "deps/workspace-resolver",
         "profile/codegen-units",
         "profile/debug-assertions",
@@ -2975,6 +2977,58 @@ fn default_features_fires_when_defaults_enable_an_optional_dependency() {
 #[test]
 fn default_features_is_quiet_without_optional_dependencies_behind_defaults() {
     let findings = findings_for("bare-release", None);
+
+    assert!(!finding_rules(&findings).contains(&"deps/default-features".to_owned()));
+}
+
+// MARK: deps/feature-unification
+
+#[test]
+fn feature_unification_fires_when_another_member_requests_defaults() {
+    use cargo_zempic::finding::{Confidence, Fixability};
+
+    let findings = findings_for("feature-unification", None);
+    let finding = finding_for(&findings, "deps/feature-unification");
+
+    assert_eq!(finding.package.as_deref(), Some("alpha"));
+    assert_eq!(finding.confidence, Confidence::Medium);
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert!(finding.detail.contains("`beta`"), "{}", finding.detail);
+    assert!(
+        finding
+            .detail
+            .contains("Resolver-v2 kind splitting is approximated"),
+        "{}",
+        finding.detail
+    );
+
+    let span = &finding
+        .location
+        .as_ref()
+        .expect("the finding carries a location")
+        .span;
+
+    assert_eq!(span.key, "dependencies.shared");
+    assert!(span.file.ends_with("alpha/Cargo.toml"), "{}", span.file);
+
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.package.as_deref() != Some("beta")
+                || finding.rule.to_string() != "deps/feature-unification")
+    );
+}
+
+#[test]
+fn feature_unification_is_quiet_without_an_opt_out() {
+    let findings = findings_for("default-features", None);
+
+    assert!(!finding_rules(&findings).contains(&"deps/feature-unification".to_owned()));
+}
+
+#[test]
+fn default_features_is_quiet_when_defaults_enable_no_optional_dependency() {
+    let findings = findings_for("feature-unification", None);
 
     assert!(!finding_rules(&findings).contains(&"deps/default-features".to_owned()));
 }

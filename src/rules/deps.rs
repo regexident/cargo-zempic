@@ -609,6 +609,121 @@ impl Rule for DefaultFeaturesRule {
     }
 }
 
+/// Reports a `default-features = false` opt-out that cargo's feature
+/// unification defeats.
+///
+/// A resolved node lists the features enabled for it across the whole graph,
+/// so `default` appears there whenever any requester asked for the defaults,
+/// including the requesters outside the workspace members.
+pub struct FeatureUnificationRule;
+
+/// The instance registered for [`FeatureUnificationRule`].
+pub const FEATURE_UNIFICATION_RULE: FeatureUnificationRule = FeatureUnificationRule;
+
+/// The names of the workspace members whose own normal dependencies request
+/// the default features of `target`, in ascending order.
+fn members_requesting_defaults(
+    metadata: &cargo_metadata::Metadata,
+    target: &cargo_metadata::PackageId,
+) -> BTreeSet<String> {
+    metadata
+        .packages
+        .iter()
+        .filter(|member| metadata.workspace_members.contains(&member.id))
+        .filter(|member| {
+            member.dependencies.iter().any(|dependency| {
+                dependency.kind == cargo_metadata::DependencyKind::Normal
+                    && dependency.uses_default_features
+                    && resolved_dependency(metadata, member, dependency)
+                        .is_some_and(|resolved| resolved.id == *target)
+            })
+        })
+        .map(|member| member.name.to_string())
+        .collect()
+}
+
+impl Rule for FeatureUnificationRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        let metadata = registered("deps/feature-unification");
+        let mut findings = Vec::new();
+
+        let Some(resolve) = context.metadata.resolve.as_ref() else {
+            return findings;
+        };
+
+        for package in selected_packages(context) {
+            let manifest = manifest_for(context, package);
+
+            for dependency in &package.dependencies {
+                if dependency.kind != cargo_metadata::DependencyKind::Normal
+                    || dependency.uses_default_features
+                {
+                    continue;
+                }
+
+                let Some(resolved) = resolved_dependency(context.metadata, package, dependency)
+                else {
+                    continue;
+                };
+
+                let defaults_enabled = resolve
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == resolved.id)
+                    .is_some_and(|node| {
+                        node.features
+                            .iter()
+                            .any(|feature| feature.as_str() == "default")
+                    });
+
+                if !defaults_enabled {
+                    continue;
+                }
+
+                let key = declared_key(dependency);
+                let requesters = members_requesting_defaults(context.metadata, &resolved.id);
+
+                let reason = if requesters.is_empty() {
+                    format!(
+                        "A dependency outside the workspace members' own declarations requests \
+                         the default features of `{key}`, and cargo unifies features across the \
+                         graph."
+                    )
+                } else {
+                    let members = requesters
+                        .iter()
+                        .map(|name| format!("`{name}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    format!(
+                        "Workspace member {members} requests the default features of `{key}`, \
+                         and cargo unifies features across the workspace."
+                    )
+                };
+
+                findings.push(build(
+                    metadata,
+                    Some(package.name.to_string()),
+                    Confidence::Medium,
+                    Effort::Moderate,
+                    Fixability::ReportOnly,
+                    None,
+                    dependency_location(manifest, dependency),
+                    &format!(
+                        "`{key}` keeps its default features despite `default-features = false`"
+                    ),
+                    format!("{reason} {KIND_SPLITTING_NOTE}"),
+                    "Restoring the opt-out means changing the other declaration that requests the \
+                     defaults, which may remove functionality its crate relies on.",
+                ));
+            }
+        }
+
+        findings
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{compatibility_class, effective_resolver, expand_features};
