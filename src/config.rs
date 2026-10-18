@@ -344,23 +344,35 @@ fn find_workspace_file(
 }
 
 /// The gates that decide which findings a run reports.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// A gate left [`None`] is unstated by its source, so [`resolve_gates`] falls
+/// back to the next source and, past them, to the default of the gate itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Gates {
     /// The selectors whose matching findings are suppressed.
     pub ignore: Vec<IgnoreRule>,
     /// The selectors restricting the run to matching rules.
     pub only: Vec<Selector>,
-    /// Whether advisory and report-only findings are included.
-    pub include_advisory: bool,
+    /// Whether advisory and report-only findings are included, defaulting to
+    /// `true` when unspecified.
+    pub include_advisory: Option<bool>,
+    /// Whether nightly-only findings are raised from report-only to
+    /// consequential, defaulting to `false` when unspecified.
+    pub allow_nightly: Option<bool>,
 }
 
-impl Default for Gates {
-    fn default() -> Self {
-        Gates {
-            ignore: Vec::new(),
-            only: Vec::new(),
-            include_advisory: true,
-        }
+/// Merge the command line's gates over the configuration file's `[analysis]`.
+///
+/// A gate the command line states wins over the file's; a gate neither states
+/// stays [`None`]. The ignore list and the `--only` selectors come from the
+/// command line alone, because the file's ignores are merged separately from
+/// its `[[ignore]]` entries.
+pub fn resolve_gates(cli: &Gates, file: &AnalysisSection) -> Gates {
+    Gates {
+        ignore: cli.ignore.clone(),
+        only: cli.only.clone(),
+        include_advisory: cli.include_advisory.or(file.include_advisory),
+        allow_nightly: cli.allow_nightly.or(file.allow_nightly),
     }
 }
 
@@ -452,7 +464,7 @@ pub fn filter(findings: Vec<crate::finding::Finding>, gates: &Gates, today: Civi
                 return false;
             }
 
-            if !gates.include_advisory && finding.is_advisory() {
+            if !gates.include_advisory.unwrap_or(true) && finding.is_advisory() {
                 return false;
             }
 
@@ -633,7 +645,9 @@ impl RawIgnore {
 
 #[cfg(test)]
 mod tests {
-    use super::{CivilDate, FileConfig, Filtered, Gates, IgnoreRule, filter};
+    use super::{
+        AnalysisSection, CivilDate, FileConfig, Filtered, Gates, IgnoreRule, filter, resolve_gates,
+    };
     use crate::ZempicError;
     use crate::dimension::Dimension;
     use crate::finding::{
@@ -1027,7 +1041,8 @@ fixable = true
         let gates = Gates {
             ignore: vec![ignore("profile/lto", Some("reason"), None, None)],
             only: Vec::new(),
-            include_advisory: true,
+            include_advisory: Some(true),
+            allow_nightly: None,
         };
 
         let filtered = filter(
@@ -1048,7 +1063,8 @@ fixable = true
         let gates = Gates {
             ignore: Vec::new(),
             only: vec![Selector::parse("profile").unwrap()],
-            include_advisory: true,
+            include_advisory: Some(true),
+            allow_nightly: None,
         };
 
         let filtered = filter(
@@ -1068,7 +1084,8 @@ fixable = true
         let gates = Gates {
             ignore: vec![ignore("profile/lto", Some("reason"), None, None)],
             only: vec![Selector::parse("profile/lto").unwrap()],
-            include_advisory: true,
+            include_advisory: Some(true),
+            allow_nightly: None,
         };
 
         let filtered = filter(
@@ -1085,7 +1102,8 @@ fixable = true
         let gates = Gates {
             ignore: Vec::new(),
             only: vec![Selector::parse("advisory/upx").unwrap()],
-            include_advisory: false,
+            include_advisory: Some(false),
+            allow_nightly: None,
         };
 
         let filtered = filter(
@@ -1102,7 +1120,8 @@ fixable = true
         let gates = Gates {
             ignore: Vec::new(),
             only: Vec::new(),
-            include_advisory: false,
+            include_advisory: Some(false),
+            allow_nightly: None,
         };
 
         let filtered = filter(
@@ -1128,7 +1147,8 @@ fixable = true
                 None,
             )],
             only: Vec::new(),
-            include_advisory: true,
+            include_advisory: Some(true),
+            allow_nightly: None,
         };
 
         let filtered = filter(
@@ -1160,7 +1180,8 @@ fixable = true
                 Some("2026-10-03"),
             )],
             only: Vec::new(),
-            include_advisory: true,
+            include_advisory: Some(true),
+            allow_nightly: None,
         };
 
         let filtered = filter(
@@ -1189,7 +1210,8 @@ fixable = true
                 Some("2026-10-04"),
             )],
             only: Vec::new(),
-            include_advisory: true,
+            include_advisory: Some(true),
+            allow_nightly: None,
         };
 
         let filtered = filter(
@@ -1207,7 +1229,8 @@ fixable = true
         let gates = Gates {
             ignore: vec![ignore("profile/lto", None, None, None)],
             only: Vec::new(),
-            include_advisory: true,
+            include_advisory: Some(true),
+            allow_nightly: None,
         };
 
         let filtered = filter(
@@ -1227,7 +1250,8 @@ fixable = true
         let blank = Gates {
             ignore: vec![ignore("profile/lto", Some("   "), None, None)],
             only: Vec::new(),
-            include_advisory: true,
+            include_advisory: Some(true),
+            allow_nightly: None,
         };
         let filtered = filter(
             vec![finding("profile/lto", None, Fixability::Safe)],
@@ -1241,5 +1265,98 @@ fixable = true
                 selector: "profile/lto".to_owned(),
             }]
         );
+    }
+
+    #[test]
+    fn resolve_gates_prefers_the_command_line_advisory_gate() {
+        let cli = Gates {
+            include_advisory: Some(false),
+            ..Gates::default()
+        };
+        let file = AnalysisSection {
+            include_advisory: Some(true),
+            ..AnalysisSection::default()
+        };
+
+        assert_eq!(resolve_gates(&cli, &file).include_advisory, Some(false));
+    }
+
+    #[test]
+    fn resolve_gates_falls_back_to_the_file_advisory_gate() {
+        let file = AnalysisSection {
+            include_advisory: Some(false),
+            ..AnalysisSection::default()
+        };
+
+        // Plausible bug: resolving `None` to the `true` default before merging,
+        // which would let the default override the file's explicit `false`.
+        assert_eq!(
+            resolve_gates(&Gates::default(), &file).include_advisory,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn resolve_gates_keeps_an_unstated_gate_unstated() {
+        let resolved = resolve_gates(&Gates::default(), &AnalysisSection::default());
+
+        assert_eq!(resolved.include_advisory, None);
+        assert_eq!(resolved.allow_nightly, None);
+    }
+
+    #[test]
+    fn resolve_gates_prefers_the_command_line_nightly_gate() {
+        let cli = Gates {
+            allow_nightly: Some(true),
+            ..Gates::default()
+        };
+
+        assert_eq!(
+            resolve_gates(&cli, &AnalysisSection::default()).allow_nightly,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn resolve_gates_falls_back_to_the_file_nightly_gate() {
+        let file = AnalysisSection {
+            allow_nightly: Some(true),
+            ..AnalysisSection::default()
+        };
+
+        // Plausible bug: resolving the advisory gate alone and dropping
+        // `allow_nightly`, leaving the file's opt-in unread.
+        assert_eq!(
+            resolve_gates(&Gates::default(), &file).allow_nightly,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn resolve_gates_takes_ignores_and_only_from_the_command_line() {
+        let cli = Gates {
+            ignore: vec![ignore("profile/lto", Some("reason"), None, None)],
+            only: vec![Selector::parse("profile").unwrap()],
+            include_advisory: Some(true),
+            allow_nightly: None,
+        };
+
+        assert_eq!(resolve_gates(&cli, &AnalysisSection::default()), cli);
+    }
+
+    #[test]
+    fn an_unstated_advisory_gate_includes_advisory_findings() {
+        let filtered = filter(
+            vec![
+                finding("advisory/upx", None, Fixability::ReportOnly),
+                finding("profile/strip", None, Fixability::Safe),
+            ],
+            &Gates::default(),
+            today(),
+        );
+
+        // Plausible bug: reading an unstated gate as `false`, which would
+        // suppress every report-only finding by default.
+        assert_eq!(retained(&filtered), ["advisory/upx", "profile/strip"]);
     }
 }

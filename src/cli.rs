@@ -230,6 +230,10 @@ pub struct AnalysisArgs {
     #[arg(long = "no-include-advisory")]
     pub no_include_advisory: bool,
 
+    /// Raise nightly-only findings from report-only to consequential.
+    #[arg(long = "allow-nightly")]
+    pub allow_nightly: bool,
+
     /// Cargo's target-selection flags, declared only to be rejected.
     #[command(flatten)]
     pub rejected: reject::RejectedTargetArgs,
@@ -281,7 +285,14 @@ impl From<&AnalysisArgs> for AnalysisConfig {
                     })
                     .collect(),
                 only: args.only.clone(),
-                include_advisory: !args.no_include_advisory,
+                include_advisory: if args.no_include_advisory {
+                    Some(false)
+                } else if args.include_advisory {
+                    Some(true)
+                } else {
+                    None
+                },
+                allow_nightly: if args.allow_nightly { Some(true) } else { None },
             },
             today: crate::config::CivilDate::today(),
             environment: crate::cargo_config::CargoEnvironment::from_process(),
@@ -419,6 +430,7 @@ mod tests {
             "--only",
             "profile",
             "--no-include-advisory",
+            "--allow-nightly",
         ])
         .expect("a full invocation parses");
 
@@ -453,7 +465,8 @@ mod tests {
                         expires: None,
                     }],
                     only: vec![crate::finding::Selector::parse("profile").unwrap()],
-                    include_advisory: false,
+                    include_advisory: Some(false),
+                    allow_nightly: Some(true),
                 },
                 today: crate::config::CivilDate::today(),
                 environment: crate::cargo_config::CargoEnvironment::from_process(),
@@ -462,22 +475,31 @@ mod tests {
     }
 
     #[test]
-    fn include_advisory_defaults_to_true() {
-        let default =
-            Args::try_parse_from(["cargo-zempic", "check"]).expect("a plain check parses");
+    fn advisory_and_nightly_flags_are_tri_state() {
+        let plain = Args::try_parse_from(["cargo-zempic", "check"]).expect("a plain check parses");
+        let included = Args::try_parse_from(["cargo-zempic", "check", "--include-advisory"])
+            .expect("the assertion parses");
         let negated = Args::try_parse_from(["cargo-zempic", "check", "--no-include-advisory"])
             .expect("the negation parses");
+        let nightly = Args::try_parse_from(["cargo-zempic", "check", "--allow-nightly"])
+            .expect("the nightly acceptance parses");
 
-        assert!(
-            AnalysisConfig::from(analysis(&default))
-                .gates
-                .include_advisory
-        );
-        assert!(
-            !AnalysisConfig::from(analysis(&negated))
-                .gates
-                .include_advisory
-        );
+        let plain = AnalysisConfig::from(analysis(&plain)).gates;
+        let included = AnalysisConfig::from(analysis(&included)).gates;
+        let negated = AnalysisConfig::from(analysis(&negated)).gates;
+        let nightly = AnalysisConfig::from(analysis(&nightly)).gates;
+
+        // An unstated gate must stay `None` so the configuration file, not a
+        // default, decides it: a plain invocation would otherwise overwrite
+        // `[analysis] include_advisory` with the default on every run.
+        assert_eq!(plain.include_advisory, None);
+        assert_eq!(plain.allow_nightly, None);
+        assert_eq!(included.include_advisory, Some(true));
+        assert_eq!(included.allow_nightly, None);
+        assert_eq!(negated.include_advisory, Some(false));
+        assert_eq!(negated.allow_nightly, None);
+        assert_eq!(nightly.allow_nightly, Some(true));
+        assert_eq!(nightly.include_advisory, None);
     }
 
     #[test]

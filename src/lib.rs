@@ -480,6 +480,10 @@ fn finish(
 /// [`DEFAULT_PROFILE`]; the dimensions are the command line's when non-empty,
 /// else the configuration's, else [`dimension::Dimension::Size`].
 ///
+/// The gates are the command line's, else the configuration's `[analysis]`
+/// table, else the gate's own default; the ignores are the configuration's
+/// `[[ignore]]` entries followed by the command line's.
+///
 /// # Errors
 ///
 /// Returns a [`ZempicError`] when resolution fails, when a configuration file
@@ -542,8 +546,7 @@ pub fn analyze(config: &AnalysisConfig) -> Result<report::Report> {
             .into_iter()
             .chain(config.gates.ignore.iter().cloned())
             .collect(),
-        only: config.gates.only.clone(),
-        include_advisory: config.gates.include_advisory,
+        ..config::resolve_gates(&config.gates, &file_config.analysis)
     };
 
     let root_manifest =

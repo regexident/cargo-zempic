@@ -579,7 +579,8 @@ fn analyze_config(workspace: &common::MaterializedWorkspace, only: &[&str]) -> A
                 .iter()
                 .map(|text| cargo_zempic::finding::Selector::parse(text).unwrap())
                 .collect(),
-            include_advisory: true,
+            include_advisory: Some(true),
+            allow_nightly: None,
         },
         today: cargo_zempic::config::CivilDate::parse("2026-10-04").unwrap(),
         environment: cargo_zempic::cargo_config::CargoEnvironment::sealed(workspace.root()),
@@ -1118,6 +1119,50 @@ fn analyze_surfaces_notices_from_the_workspace_configuration() {
                 selector: "profile/lto".to_owned(),
             },
         ]
+    );
+}
+
+/// `analyze` honors the `[analysis] include_advisory` gate, and the command
+/// line overrides it.
+#[test]
+fn analysis_honors_configured_include_advisory() {
+    let workspace = common::Fixture::new("rustflags-shadowed").materialize();
+
+    std::fs::write(
+        workspace.root().join("zempic.toml"),
+        "schema_version = 1\n[analysis]\ninclude_advisory = false\n",
+    )
+    .unwrap();
+
+    // The command line states neither gate, so the configuration file alone
+    // decides them; it also pins the triple the fixture's shadowing table names.
+    let mut config = analyze_config(&workspace, &[]);
+    config.target = Some("x86_64-unknown-linux-gnu".to_owned());
+    config.gates.include_advisory = None;
+
+    let suppressed = cargo_zempic::analyze(&config)
+        .expect("the analysis succeeds")
+        .findings;
+
+    // Plausible bug: resolving the advisory gate to `true` on the command line
+    // whenever `--no-include-advisory` is absent, which would make the file's
+    // explicit `false` unreadable and keep reporting report-only findings.
+    assert!(
+        suppressed.iter().all(|finding| !finding.is_advisory()),
+        "the configuration's `false` gate must suppress report-only findings: {:?}",
+        finding_rules(&suppressed)
+    );
+
+    config.gates.include_advisory = Some(true);
+
+    let included = cargo_zempic::analyze(&config)
+        .expect("the analysis succeeds")
+        .findings;
+
+    assert!(
+        finding_rules(&included).contains(&"config/rustflags-shadowed".to_owned()),
+        "the command line's `true` gate must restore the report-only finding: {:?}",
+        finding_rules(&included)
     );
 }
 
