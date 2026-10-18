@@ -15,6 +15,7 @@ pub mod manifest;
 pub mod profile;
 pub mod report;
 pub mod rules;
+pub mod toolchain;
 pub mod workspace;
 
 /// The result type used throughout the crate, carrying [`ZempicError`].

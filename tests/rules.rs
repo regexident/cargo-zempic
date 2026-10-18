@@ -3893,6 +3893,25 @@ fn embedded_knowledge_base_entries_are_verified_within_their_ranges() {
     }
 }
 
+// MARK: Toolchain
+
+#[test]
+fn active_prefers_the_workspace_toolchain_file() {
+    let directory = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        directory.path().join("rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"nightly\"\n",
+    )
+    .unwrap();
+
+    let root = camino::Utf8PathBuf::from_path_buf(directory.path().to_path_buf()).unwrap();
+
+    assert_eq!(
+        cargo_zempic::toolchain::active(&root),
+        cargo_zempic::toolchain::ToolchainChannel::Nightly
+    );
+}
+
 #[test]
 fn embedded_knowledge_base_advice_carries_no_size_figure() {
     let base = cargo_zempic::knowledge::KnowledgeBase::embedded()
