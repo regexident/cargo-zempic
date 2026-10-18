@@ -170,6 +170,9 @@ pub struct FileConfig {
     pub report: ReportSection,
     /// The `[[ignore]]` entries.
     pub ignore: Vec<IgnoreRule>,
+    /// The `[knowledge_base.crates.*]` entries by crate name, which extend and
+    /// override the embedded knowledge base.
+    pub knowledge_base: std::collections::BTreeMap<String, crate::knowledge::CrateEntry>,
 }
 
 impl FileConfig {
@@ -180,6 +183,7 @@ impl FileConfig {
             analysis: AnalysisSection::default(),
             report: ReportSection::default(),
             ignore: Vec::new(),
+            knowledge_base: std::collections::BTreeMap::new(),
         }
     }
 
@@ -190,9 +194,11 @@ impl FileConfig {
     /// Returns [`ZempicError::ConfigParse`](crate::ZempicError::ConfigParse)
     /// when the document is malformed or carries an unknown key,
     /// [`ZempicError::ConfigSchemaVersion`](crate::ZempicError::ConfigSchemaVersion)
-    /// when `schema_version` is not [`SCHEMA_VERSION`], and the selector, date,
-    /// dimension, format or fail-on error for an invalid value, each naming the
-    /// file and the offending value.
+    /// when `schema_version` is not [`SCHEMA_VERSION`],
+    /// [`ZempicError::KnowledgeBaseEntry`](crate::ZempicError::KnowledgeBaseEntry)
+    /// when a `[knowledge_base.crates.*]` entry holds an invalid value, and the
+    /// selector, date, dimension, format or fail-on error for an invalid value,
+    /// each naming the file and the offending value.
     pub fn parse(path: &camino::Utf8Path, text: &str) -> crate::Result<Self> {
         let raw: RawConfig =
             toml_edit::de::from_str(text).map_err(|source| crate::ZempicError::ConfigParse {
@@ -217,11 +223,15 @@ impl FileConfig {
             ignore.push(entry.into_rule(path)?);
         }
 
+        let knowledge_base =
+            crate::knowledge::parse_crates(path.as_str(), raw.knowledge_base.crates)?;
+
         Ok(FileConfig {
             schema_version: raw.schema_version,
             analysis,
             report,
             ignore,
+            knowledge_base,
         })
     }
 
@@ -229,12 +239,19 @@ impl FileConfig {
     ///
     /// Each [`Some`] scalar of `self` replaces the base's; each [`None`] keeps
     /// the base's. `ignore` entries are the base's followed by `self`'s.
+    /// `knowledge_base` entries merge by crate name, `self`'s replacing the
+    /// base's entirely.
     pub fn merge_over(self, base: Self) -> Self {
+        let mut knowledge_base = base.knowledge_base;
+
+        knowledge_base.extend(self.knowledge_base);
+
         FileConfig {
             schema_version: self.schema_version,
             analysis: self.analysis.merge_over(base.analysis),
             report: self.report.merge_over(base.report),
             ignore: base.ignore.into_iter().chain(self.ignore).collect(),
+            knowledge_base,
         }
     }
 
@@ -472,6 +489,16 @@ struct RawConfig {
     report: RawReport,
     #[serde(default)]
     ignore: Vec<RawIgnore>,
+    #[serde(default)]
+    knowledge_base: RawKnowledgeBaseSection,
+}
+
+/// The `[knowledge_base]` table as deserialized.
+#[derive(serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawKnowledgeBaseSection {
+    #[serde(default)]
+    crates: std::collections::BTreeMap<String, crate::knowledge::RawCrateEntry>,
 }
 
 /// The `[analysis]` table as deserialized.
@@ -616,7 +643,7 @@ mod tests {
     use crate::report::{FailOn, Format, Notice};
     use camino::Utf8Path;
 
-    /// The §6.2 schema with its knowledge-base block omitted.
+    /// The §6.2 schema.
     const FULL_SCHEMA: &str = "\
 schema_version = 1
 
@@ -635,6 +662,17 @@ rule = \"profile/lto\"
 reason = \"link times in CI exceed our budget\"
 packages = [\"*\"]
 expires = \"2026-12-31\"
+
+[knowledge_base.crates.internal-http]
+versions = \">=1.0, <3.0\"
+verified_through = \"2.4.1\"
+
+[[knowledge_base.crates.internal-http.features]]
+name = \"telemetry\"
+default = true
+magnitude = \"moderate\"
+advice = \"disable unless the service exports metrics\"
+fixable = true
 ";
 
     #[test]
@@ -754,6 +792,50 @@ expires = \"2026-12-31\"
                 day: 31,
             })
         );
+
+        let entry = &config.knowledge_base["internal-http"];
+        assert_eq!(
+            entry.versions,
+            semver::VersionReq::parse(">=1.0, <3.0").unwrap()
+        );
+        assert_eq!(
+            entry.verified_through,
+            semver::Version::parse("2.4.1").unwrap()
+        );
+        assert_eq!(entry.features.len(), 1);
+        assert_eq!(entry.features[0].name, "telemetry");
+        assert!(entry.features[0].default);
+        assert_eq!(entry.features[0].magnitude, Magnitude::Moderate);
+        assert!(entry.features[0].fixable);
+        assert_eq!(
+            entry.features[0].advice,
+            "disable unless the service exports metrics"
+        );
+    }
+
+    #[test]
+    fn file_config_parses_a_knowledge_base_entry() {
+        let config = parse(
+            "schema_version = 1\n\n[knowledge_base.crates.harness]\nversions = \">=0.3, <0.4\"\nverified_through = \"0.3.0\"\nmagnitude = \"large\"\ndev_only = true\n",
+        )
+        .expect("the entry parses");
+
+        let entry = &config.knowledge_base["harness"];
+        assert_eq!(entry.magnitude, Some(Magnitude::Large));
+        assert!(entry.dev_only);
+        assert!(entry.features.is_empty());
+    }
+
+    #[test]
+    fn file_config_rejects_an_invalid_knowledge_base_range() {
+        let error = parse(
+            "schema_version = 1\n\n[knowledge_base.crates.demo]\nversions = \"not a range\"\nverified_through = \"1.0.0\"\n",
+        )
+        .expect_err("an invalid range is rejected");
+
+        assert!(matches!(error, ZempicError::KnowledgeBaseEntry { .. }));
+        assert!(error.to_string().contains("zempic.toml"), "{error}");
+        assert!(error.to_string().contains("demo"), "{error}");
     }
 
     #[test]
@@ -810,13 +892,34 @@ expires = \"2026-12-31\"
     }
 
     #[test]
-    fn file_config_rejects_a_knowledge_base_table() {
-        let error =
-            parse("schema_version = 1\n\n[knowledge_base.crates.demo]\nversions = \">=1.0\"\n")
-                .expect_err("a knowledge-base table is rejected");
+    fn merge_replaces_knowledge_base_entries_by_crate_name() {
+        let entry = |name: &str, verified_through: &str| {
+            format!(
+                "[knowledge_base.crates.{name}]\nversions = \">=1.0, <2\"\nverified_through = \"{verified_through}\"\n"
+            )
+        };
+        let base = parse(&format!(
+            "schema_version = 1\n\n{}\n{}",
+            entry("alpha", "1.0.0"),
+            entry("beta", "1.0.0")
+        ))
+        .unwrap();
+        let higher = parse(&format!("schema_version = 1\n\n{}", entry("beta", "1.5.0"))).unwrap();
 
-        assert!(matches!(error, ZempicError::ConfigParse { .. }));
-        assert!(error.to_string().contains("knowledge_base"));
+        let merged = higher.merge_over(base);
+
+        assert_eq!(
+            merged.knowledge_base.keys().collect::<Vec<_>>(),
+            ["alpha", "beta"]
+        );
+        assert_eq!(
+            merged.knowledge_base["alpha"].verified_through,
+            semver::Version::parse("1.0.0").unwrap()
+        );
+        assert_eq!(
+            merged.knowledge_base["beta"].verified_through,
+            semver::Version::parse("1.5.0").unwrap()
+        );
     }
 
     #[test]
@@ -830,6 +933,7 @@ expires = \"2026-12-31\"
             },
             report: Default::default(),
             ignore: vec![ignore_rule("profile/lto")],
+            knowledge_base: Default::default(),
         };
         let higher = FileConfig {
             schema_version: 1,
@@ -840,6 +944,7 @@ expires = \"2026-12-31\"
             },
             report: Default::default(),
             ignore: vec![ignore_rule("deps/default-features")],
+            knowledge_base: Default::default(),
         };
 
         let merged = higher.merge_over(base);
