@@ -8,6 +8,7 @@ use crate::finding::{
 };
 use crate::manifest::{KeySpan, ManifestDocument};
 use crate::rules::{Rule, RuleContext, RuleMetadata};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Where cargo takes the effective feature resolver from.
 enum ResolverSource {
@@ -255,11 +256,115 @@ fn build(
     }
 }
 
+/// The semver compatibility class of `version`.
+///
+/// Two versions are interchangeable under cargo's resolution exactly when their
+/// classes are equal: the major version when it is non-zero, else the minor
+/// version of a `0.x` release, else the patch version of a `0.0.x` release.
+fn compatibility_class(version: &cargo_metadata::semver::Version) -> (u64, u64, u64) {
+    if version.major > 0 {
+        return (version.major, 0, 0);
+    }
+
+    if version.minor > 0 {
+        return (0, version.minor, 0);
+    }
+
+    (0, 0, version.patch)
+}
+
+/// Reports a crate that is resolved at several semver-incompatible versions.
+///
+/// Each incompatible version is compiled and linked separately, so the crate's
+/// code appears in the artifact once per version.
+pub struct DuplicateVersionsRule;
+
+/// The instance registered for [`DuplicateVersionsRule`].
+pub const DUPLICATE_VERSIONS_RULE: DuplicateVersionsRule = DuplicateVersionsRule;
+
+impl Rule for DuplicateVersionsRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        let metadata = registered("deps/duplicate-versions");
+
+        let Some(resolve) = &context.metadata.resolve else {
+            return Vec::new();
+        };
+
+        let resolved: BTreeSet<&cargo_metadata::PackageId> =
+            resolve.nodes.iter().map(|node| &node.id).collect();
+
+        let mut versions_by_name: BTreeMap<&str, BTreeSet<&cargo_metadata::semver::Version>> =
+            BTreeMap::new();
+
+        for package in &context.metadata.packages {
+            if resolved.contains(&package.id) {
+                versions_by_name
+                    .entry(package.name.as_str())
+                    .or_default()
+                    .insert(&package.version);
+            }
+        }
+
+        let mut findings = Vec::new();
+
+        for (name, versions) in versions_by_name {
+            let classes: BTreeSet<(u64, u64, u64)> = versions
+                .iter()
+                .map(|version| compatibility_class(version))
+                .collect();
+
+            if classes.len() < 2 {
+                continue;
+            }
+
+            let listed = versions
+                .iter()
+                .map(|version| format!("`{version}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let detail = format!(
+                "`{name}` is resolved at {listed}. Each incompatible version is compiled and \
+                 linked separately, so the crate's code is present in the artifact once per \
+                 version."
+            );
+
+            findings.push(build(
+                metadata,
+                None,
+                Confidence::High,
+                Effort::Moderate,
+                Fixability::ReportOnly,
+                None,
+                None,
+                &format!("`{name}` is resolved at several incompatible versions"),
+                detail,
+                "Unifying on one version can require upgrading or downgrading the crates that \
+                 depend on it, which can change their behavior.",
+            ));
+        }
+
+        findings
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::effective_resolver;
+    use super::{compatibility_class, effective_resolver};
     use crate::manifest::ManifestDocument;
     use camino::Utf8Path;
+    use cargo_metadata::semver::Version;
+
+    #[test]
+    fn compatibility_class_uses_the_leftmost_non_zero_component() {
+        let class = |text: &str| compatibility_class(&Version::parse(text).unwrap());
+
+        assert_eq!(class("1.2.3"), (1, 0, 0));
+        assert_eq!(class("1.9.0"), (1, 0, 0));
+        assert_eq!(class("0.4.7"), (0, 4, 0));
+        assert_eq!(class("0.0.3"), (0, 0, 3));
+        assert_eq!(class("2.0.0"), (2, 0, 0));
+    }
 
     fn resolver_of(text: &str) -> &'static str {
         let manifest =

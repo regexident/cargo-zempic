@@ -278,6 +278,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             summary: "Reporting a workspace that unifies features across dependency kinds",
             documentation: include_str!("rules/docs/deps/workspace-resolver.md"),
         },
+        RuleMetadata {
+            rule: &crate::rules::deps::DUPLICATE_VERSIONS_RULE,
+            id: "deps/duplicate-versions",
+            tier: crate::finding::Tier::Dependencies,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::ReportOnly,
+            summary: "Reporting a crate resolved at several semver-incompatible versions",
+            documentation: include_str!("rules/docs/deps/duplicate-versions.md"),
+        },
     ];
 
     REGISTRY

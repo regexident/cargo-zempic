@@ -1,0 +1,11 @@
+[package]
+name = "duplicate-versions"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared_one = { path = "vendor/shared-1", package = "shared" }
+shared_two = { path = "vendor/shared-2", package = "shared" }
+
+[workspace]
+exclude = ["vendor"]

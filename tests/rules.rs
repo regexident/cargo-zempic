@@ -104,7 +104,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories the rule tests name, one per rule condition.
-const RULE_FIXTURES: [&str; 19] = [
+const RULE_FIXTURES: [&str; 20] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -124,6 +124,7 @@ const RULE_FIXTURES: [&str; 19] = [
     "rustflags-cfg-table",
     "link-dead-code",
     "resolver-unset",
+    "duplicate-versions",
 ];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
@@ -2418,6 +2419,7 @@ fn registry_covers_every_profile_workspace_and_config_assignment() {
         "config/link-dead-code",
         "config/link-gc-sections",
         "config/rustflags-shadowed",
+        "deps/duplicate-versions",
         "deps/workspace-resolver",
         "profile/codegen-units",
         "profile/debug-assertions",
@@ -2897,4 +2899,34 @@ fn workspace_resolver_is_quiet_for_an_edition_2021_package() {
     let findings = findings_for("bare-release", None);
 
     assert!(!finding_rules(&findings).contains(&"deps/workspace-resolver".to_owned()));
+}
+
+// MARK: deps/duplicate-versions
+
+#[test]
+fn duplicate_versions_fires_on_an_incompatible_duplicate() {
+    use cargo_zempic::finding::{Effort, Fixability, Magnitude, Severity};
+
+    let findings = findings_for("duplicate-versions", None);
+    let finding = finding_for(&findings, "deps/duplicate-versions");
+
+    assert_eq!(finding.package, None);
+    assert_eq!(finding.location, None);
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert_eq!(finding.severity, Severity::Medium);
+    assert_eq!(finding.magnitude, Magnitude::Moderate);
+    assert_eq!(finding.effort, Effort::Moderate);
+    assert!(finding.title.contains("`shared`"), "{}", finding.title);
+    assert!(
+        finding.detail.contains("`1.0.0`, `2.0.0`"),
+        "{}",
+        finding.detail
+    );
+}
+
+#[test]
+fn duplicate_versions_is_quiet_without_a_duplicate() {
+    let findings = findings_for("bare-release", None);
+
+    assert!(!finding_rules(&findings).contains(&"deps/duplicate-versions".to_owned()));
 }
