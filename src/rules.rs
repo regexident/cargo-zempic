@@ -4,6 +4,7 @@ pub mod advisory;
 pub mod config;
 pub mod deps;
 pub mod library;
+pub mod nightly;
 pub mod profile;
 
 use crate::finding::{RuleId, Selector, Severity};
@@ -245,6 +246,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             fixability: crate::finding::Fixability::Safe,
             summary: "Reporting overflow checks in a release-like profile",
             documentation: include_str!("rules/docs/profile/overflow-checks.md"),
+        },
+        RuleMetadata {
+            rule: &crate::rules::nightly::NIGHTLY_LOCATION_DETAIL_RULE,
+            id: "nightly/location-detail",
+            tier: crate::finding::Tier::Behavioral,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::Consequential,
+            summary: "Reporting a nightly build whose panic reports keep source locations",
+            documentation: include_str!("rules/docs/nightly/location-detail.md"),
         },
         RuleMetadata {
             rule: &crate::rules::profile::IGNORED_MEMBER_PROFILE_RULE,
@@ -858,12 +868,14 @@ mod tests {
         assert_eq!(severity("profile/strip"), Some(Severity::High));
         assert_eq!(severity("profile/opt-level:size"), Some(Severity::High));
 
-        // A family selector matches by path prefix, so it resolves any
-        // identifier under its first segment whether or not a rule registers
-        // that identifier. The selector `nightly` is a family the table carries,
-        // while the registry carries no `nightly/*` identifier, so the lookup
-        // under it pins the selector itself rather than a registered rule.
+        // A single-segment selector matches by path prefix, so it resolves
+        // every identifier under its first segment. `nightly` is such a
+        // selector and assigns `Low` to each of its rules.
         assert_eq!(severity("nightly/location-detail"), Some(Severity::Low));
+        assert_eq!(
+            severity("nightly/panic-immediate-abort"),
+            Some(Severity::Low)
+        );
         assert_eq!(
             severity("advisory/lib-profile-not-applicable"),
             Some(Severity::Info)

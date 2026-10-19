@@ -721,6 +721,60 @@ pub fn flag_enabled(flags: &[String], name: &str) -> bool {
     false
 }
 
+/// The name and optional `=value` suffix of one `-Z` flag, split at the first
+/// `=`.
+fn split_unstable_value(value: &str) -> (&str, Option<&str>) {
+    match value.split_once('=') {
+        Some((name, suffix)) => (name, Some(suffix)),
+        None => (value, None),
+    }
+}
+
+/// The `-Z` flag named `name` as it last appears in `flags`.
+///
+/// Recognizes every form cargo accepts: the two-element `-Z name` and
+/// `-Z name=value` spellings and the one-element `-Zname` and `-Zname=value`
+/// ones. Returns [`Some`] with [`None`] for a bare flag and [`Some`] with the
+/// value for a valued flag, or [`None`] when no occurrence names `name` at all.
+///
+/// Unstable flags accumulate across the array, so the last occurrence of a name
+/// is the one the compiler acts on; an earlier occurrence does not survive.
+/// A trailing `-Z` with no element after it is dropped by cargo's own
+/// argument handling and is ignored here as well.
+pub fn unstable_flag(flags: &[String], name: &str) -> Option<Option<String>> {
+    let mut found = None;
+    let mut index = 0;
+
+    while index < flags.len() {
+        let current = flags[index].as_str();
+
+        if current == "-Z" {
+            if let Some(next) = flags.get(index + 1) {
+                let (value_name, suffix) = split_unstable_value(next);
+
+                if value_name == name {
+                    found = Some(suffix.map(str::to_owned));
+                }
+            }
+
+            index += 2;
+            continue;
+        }
+
+        if let Some(value) = current.strip_prefix("-Z") {
+            let (value_name, suffix) = split_unstable_value(value);
+
+            if value_name == name {
+                found = Some(suffix.map(str::to_owned));
+            }
+        }
+
+        index += 1;
+    }
+
+    found
+}
+
 /// Push the value of a `-C link-arg=<value>` or `-C link-args=<value>` flag
 /// onto `results`, splitting a plural `link-args` value on ASCII whitespace
 /// into multiple values while leaving a singular `link-arg` value whole.
@@ -1238,6 +1292,115 @@ mod tests {
         assert!(resolved.shadowed.is_empty());
         assert!(resolved.flags.is_empty());
         assert!(!resolved.cfg_tables_unevaluated);
+    }
+
+    #[test]
+    fn unstable_flag_reads_the_separate_bare_form() {
+        use super::unstable_flag;
+
+        assert_eq!(
+            unstable_flag(
+                &["-Z".to_owned(), "panic-immediate-abort".to_owned()],
+                "panic-immediate-abort"
+            ),
+            Some(None)
+        );
+    }
+
+    #[test]
+    fn unstable_flag_reads_the_joined_bare_form() {
+        use super::unstable_flag;
+
+        assert_eq!(
+            unstable_flag(
+                &["-Zpanic-immediate-abort".to_owned()],
+                "panic-immediate-abort"
+            ),
+            Some(None)
+        );
+    }
+
+    #[test]
+    fn unstable_flag_reads_the_separate_valued_form() {
+        use super::unstable_flag;
+
+        assert_eq!(
+            unstable_flag(
+                &["-Z".to_owned(), "location-detail=none".to_owned()],
+                "location-detail"
+            ),
+            Some(Some("none".to_owned()))
+        );
+    }
+
+    #[test]
+    fn unstable_flag_reads_the_joined_valued_form() {
+        use super::unstable_flag;
+
+        assert_eq!(
+            unstable_flag(&["-Zlocation-detail=none".to_owned()], "location-detail"),
+            Some(Some("none".to_owned()))
+        );
+    }
+
+    #[test]
+    fn unstable_flag_returns_none_when_absent() {
+        use super::unstable_flag;
+
+        assert_eq!(unstable_flag(&[], "panic-immediate-abort"), None);
+        assert_eq!(
+            unstable_flag(
+                &["-C".to_owned(), "panic-immediate-abort".to_owned()],
+                "panic-immediate-abort"
+            ),
+            None
+        );
+        assert_eq!(
+            unstable_flag(&["-Zpanic-immediate-abort".to_owned()], "location-detail"),
+            None
+        );
+    }
+
+    #[test]
+    fn unstable_flag_keeps_the_last_occurrence() {
+        use super::unstable_flag;
+
+        assert_eq!(
+            unstable_flag(
+                &[
+                    "-Zlocation-detail=none".to_owned(),
+                    "-Z".to_owned(),
+                    "location-detail=full".to_owned(),
+                ],
+                "location-detail"
+            ),
+            Some(Some("full".to_owned()))
+        );
+        assert_eq!(
+            unstable_flag(
+                &[
+                    "-Z".to_owned(),
+                    "location-detail=none".to_owned(),
+                    "-Zlocation-detail".to_owned(),
+                ],
+                "location-detail"
+            ),
+            Some(None)
+        );
+    }
+
+    #[test]
+    fn unstable_flag_ignores_a_trailing_switch() {
+        use super::unstable_flag;
+
+        assert_eq!(unstable_flag(&["-Z".to_owned()], "location-detail"), None);
+        assert_eq!(
+            unstable_flag(
+                &["-Zlocation-detail=none".to_owned(), "-Z".to_owned(),],
+                "location-detail"
+            ),
+            Some(Some("none".to_owned()))
+        );
     }
 
     #[test]

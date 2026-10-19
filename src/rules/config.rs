@@ -24,7 +24,7 @@ use crate::rules::{Rule, RuleContext, RuleMetadata};
 /// program under analysis. A rule reading [`RuleContext::cargo_configs`] gates
 /// on this predicate for the same reason the `profile/*` rules gate on
 /// [`crate::rules::profile`]'s own copy of it.
-fn config_rules_apply(context: &RuleContext<'_>, package: &str) -> bool {
+pub(crate) fn config_rules_apply(context: &RuleContext<'_>, package: &str) -> bool {
     context.resolution.selected.iter().any(|candidate| {
         candidate.name == package && candidate.classification.produces_linked_artifact()
     })
@@ -37,7 +37,7 @@ fn config_rules_apply(context: &RuleContext<'_>, package: &str) -> bool {
 /// so it is the natural destination for a key no file in the chain declares.
 /// Line one, column one stands in for "the file does not yet contain this
 /// key" rather than naming a real position in an existing document.
-fn intended_span(workspace_root: &camino::Utf8Path, key: &str) -> KeySpan {
+pub(crate) fn intended_span(workspace_root: &camino::Utf8Path, key: &str) -> KeySpan {
     KeySpan {
         file: workspace_root.join(".cargo").join("config.toml"),
         key: key.to_owned(),

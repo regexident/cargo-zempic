@@ -1,5 +1,6 @@
 use cargo_zempic::dimension::Dimension;
 use cargo_zempic::manifest::{KeySpan, ManifestDocument};
+use cargo_zempic::toolchain::ToolchainChannel;
 use cargo_zempic::workspace::{
     ArtifactKind, FeatureSelection, MetadataQuery, PackageSelection, classify_package,
     host_target_triple, load_metadata, select_packages,
@@ -104,7 +105,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories every registry sweep replays on the stable channel.
-const RULE_FIXTURES: [&str; 30] = [
+const RULE_FIXTURES: [&str; 32] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -135,7 +136,13 @@ const RULE_FIXTURES: [&str; 30] = [
     "likely-dev-only",
     "heavy-default-features",
     "build-only-note",
+    "nightly-missing",
+    "nightly-optimized",
 ];
+
+/// The subset of [`RULE_FIXTURES`] additionally replayed under the nightly
+/// channel, where the nightly rules are not silent.
+const NIGHTLY_RULE_FIXTURES: [&str; 2] = ["nightly-missing", "nightly-optimized"];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
 #[test]
@@ -591,12 +598,30 @@ fn analyze_config(workspace: &common::MaterializedWorkspace, only: &[&str]) -> A
 
 /// The findings a named fixture produces, optionally for a pinned target.
 ///
-/// The analysis runs with the default configuration; `target` pins the triple
-/// when a rule's condition depends on it.
+/// The analysis runs with the default configuration on a pinned stable
+/// channel; `target` pins the triple when a rule's condition depends on it.
 fn findings_for(fixture: &str, target: Option<&str>) -> Vec<cargo_zempic::finding::Finding> {
+    findings_for_toolchain(
+        fixture,
+        target,
+        cargo_zempic::toolchain::ToolchainChannel::Stable,
+        false,
+    )
+}
+
+/// The findings a named fixture produces on `toolchain`, with the analysis gate
+/// set to `allow_nightly`.
+fn findings_for_toolchain(
+    fixture: &str,
+    target: Option<&str>,
+    toolchain: cargo_zempic::toolchain::ToolchainChannel,
+    allow_nightly: bool,
+) -> Vec<cargo_zempic::finding::Finding> {
     let workspace = common::Fixture::new(fixture).materialize();
     let mut config = analyze_config(&workspace, &[]);
     config.target = target.map(str::to_owned);
+    config.toolchain = Some(toolchain);
+    config.gates.allow_nightly = Some(allow_nightly);
 
     cargo_zempic::analyze(&config)
         .expect("the analysis succeeds")
@@ -2514,6 +2539,7 @@ fn registry_covers_every_concrete_assignment() {
         "deps/workspace-resolver",
         "lib/heavy-default-features",
         "lib/no-feature-granularity",
+        "nightly/location-detail",
         "profile/codegen-units",
         "profile/debug-assertions",
         "profile/debug-info",
@@ -2575,6 +2601,17 @@ fn every_registered_rule_has_a_firing_and_a_quiet_fixture() {
         }
     }
 
+    // A nightly rule is silent on the stable channel, so the registry's
+    // nightly family is exercised on its own set of fixtures under the nightly
+    // channel.
+    for fixture in NIGHTLY_RULE_FIXTURES {
+        for triple in TRIPLES {
+            let findings =
+                findings_for_toolchain(fixture, Some(triple), ToolchainChannel::Nightly, false);
+            findings_by_combination.insert((fixture, triple), finding_rules(&findings));
+        }
+    }
+
     for entry in cargo_zempic::rules::registry() {
         let fires = findings_by_combination
             .values()
@@ -2607,6 +2644,40 @@ fn every_registered_rule_has_a_distinct_identifier() {
     ids.dedup();
 
     assert_eq!(ids.len(), total, "no identifier may repeat");
+}
+
+#[test]
+fn every_registered_rule_carries_a_tradeoff_on_every_finding_it_emits() {
+    let stable_findings = RULE_FIXTURES
+        .iter()
+        .map(|fixture| findings_for(fixture, None));
+    let nightly_findings = NIGHTLY_RULE_FIXTURES
+        .iter()
+        .map(|fixture| findings_for_toolchain(fixture, None, ToolchainChannel::Nightly, false));
+
+    // A nightly rule is silent on the stable channel, so its findings only
+    // exist to be checked under the nightly one.
+    for (fixture, findings) in RULE_FIXTURES
+        .iter()
+        .copied()
+        .zip(stable_findings)
+        .chain(NIGHTLY_RULE_FIXTURES.iter().copied().zip(nightly_findings))
+    {
+        for finding in &findings {
+            assert!(
+                !finding.tradeoff.trim().is_empty(),
+                "`{fixture}` produced a finding with no tradeoff: {finding:?}"
+            );
+            assert!(
+                !finding.title.trim().is_empty(),
+                "`{fixture}` produced a finding with no title: {finding:?}"
+            );
+            assert!(
+                !finding.detail.trim().is_empty(),
+                "`{fixture}` produced a finding with no detail: {finding:?}"
+            );
+        }
+    }
 }
 
 // MARK: config/rustflags-shadowed
@@ -3879,6 +3950,110 @@ fn no_feature_granularity_is_quiet_for_a_library_without_dependencies() {
     let findings = findings_for("library-only", None);
 
     assert!(!finding_rules(&findings).contains(&"lib/no-feature-granularity".to_owned()));
+}
+
+// MARK: nightly/location-detail
+
+#[test]
+fn nightly_location_detail_fires_without_its_flag() {
+    let findings =
+        findings_for_toolchain("nightly-missing", None, ToolchainChannel::Nightly, false);
+
+    assert!(
+        finding_rules(&findings).contains(&"nightly/location-detail".to_owned()),
+        "a nightly build without `-Z location-detail=none` must fire: {:?}",
+        finding_rules(&findings)
+    );
+
+    let finding = finding_for(&findings, "nightly/location-detail");
+
+    assert_eq!(
+        finding
+            .change
+            .as_ref()
+            .map(|change| change.current.as_str()),
+        Some("unset"),
+        "a build with no flag reports the option unset: {finding:?}"
+    );
+    assert_eq!(
+        finding
+            .change
+            .as_ref()
+            .map(|change| change.recommended.as_str()),
+        Some("location-detail=none"),
+        "the remedy is the valued `none` spelling: {finding:?}"
+    );
+    assert_eq!(
+        finding.references,
+        ["https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/location-detail.html"],
+        "the finding names the unstable option it recommends: {finding:?}"
+    );
+}
+
+#[test]
+fn nightly_location_detail_is_quiet_with_its_flag() {
+    let findings =
+        findings_for_toolchain("nightly-optimized", None, ToolchainChannel::Nightly, false);
+
+    assert!(
+        !finding_rules(&findings).contains(&"nightly/location-detail".to_owned()),
+        "`-Zlocation-detail=none` must silence the rule: {:?}",
+        finding_rules(&findings)
+    );
+}
+
+#[test]
+fn nightly_location_detail_explains_a_shadowed_declaration() {
+    use cargo_zempic::cargo_config::CargoEnvironment;
+
+    // Both files sit in the workspace root, and a matching `build.rustflags`
+    // is what leaves the option declared yet unapplied.
+    let workspace = common::Fixture::new("fully-optimized").materialize();
+
+    std::fs::create_dir_all(workspace.root().join(".cargo"))
+        .expect("the workspace configuration directory is created");
+    std::fs::write(
+        workspace.root().join(".cargo/config.toml"),
+        "[target.'cfg(windows)']\nrustflags = [\"-Z\", \"location-detail=none\"]\n",
+    )
+    .expect("the workspace configuration is written");
+
+    let mut config = analyze_config(&workspace, &[]);
+    config.target = Some("x86_64-unknown-linux-gnu".to_owned());
+    config.toolchain = Some(ToolchainChannel::Nightly);
+    let mut environment = CargoEnvironment::sealed(workspace.root());
+    environment.rustflags = Some("-C target-cpu=native".to_owned());
+    config.environment = environment;
+
+    let findings = cargo_zempic::analyze(&config)
+        .expect("the analysis succeeds")
+        .findings;
+    let finding = finding_for(&findings, "nightly/location-detail");
+
+    assert_eq!(
+        finding
+            .change
+            .as_ref()
+            .map(|change| change.current.as_str()),
+        Some("unset"),
+        "the applied rank carries no occurrence of the option: {finding:?}"
+    );
+    assert!(
+        finding.detail.contains("rank cargo does not apply"),
+        "the detail must explain that the declaration sits in an ignored rank: {finding:?}"
+    );
+}
+
+// MARK: nightly/panic-immediate-abort
+
+/// The nightly findings in `findings`.
+fn nightly_findings(
+    findings: &[cargo_zempic::finding::Finding],
+) -> Vec<&cargo_zempic::finding::Finding> {
+    findings
+        .iter()
+        .filter(|finding| finding.rule.to_string().starts_with("nightly/"))
+        .collect()
 }
 
 // MARK: Knowledge base
