@@ -427,6 +427,17 @@ pub struct Filtered {
 /// from the advisory gate, because naming a rule is an explicit request for it.
 /// Notices are produced from the ignores alone, so an expired or undocumented
 /// ignore warns even in a run with nothing to suppress.
+///
+/// The advisory gate never suppresses a finding in the `nightly` category,
+/// whether its fixability is [`crate::finding::Fixability::ReportOnly`] for
+/// want of [`Gates::allow_nightly`] or [`crate::finding::Fixability::Consequential`]
+/// because the gate accepted the remedy, because a nightly rule's fixability is
+/// a gate state rather than a statement about advisory content. Every other
+/// suppression — the ignores, the `--only` scope, and the `--only` exemption —
+/// applies to nightly findings unchanged. Whether a finding belongs to the
+/// advisory category is [`crate::finding::Finding::is_advisory`]'s question;
+/// this gate asks the narrower one of whether report-only fixability alone
+/// accounts for it.
 pub fn filter(findings: Vec<crate::finding::Finding>, gates: &Gates, today: CivilDate) -> Filtered {
     let mut notices = Vec::new();
 
@@ -464,7 +475,10 @@ pub fn filter(findings: Vec<crate::finding::Finding>, gates: &Gates, today: Civi
                 return false;
             }
 
-            if !gates.include_advisory.unwrap_or(true) && finding.is_advisory() {
+            if !gates.include_advisory.unwrap_or(true)
+                && finding.is_advisory()
+                && finding.rule.category() != "nightly"
+            {
                 return false;
             }
 
@@ -1358,5 +1372,91 @@ fixable = true
         // Plausible bug: reading an unstated gate as `false`, which would
         // suppress every report-only finding by default.
         assert_eq!(retained(&filtered), ["advisory/upx", "profile/strip"]);
+    }
+
+    #[test]
+    fn advisory_gate_leaves_a_report_only_nightly_finding_visible() {
+        let gates = Gates {
+            ignore: Vec::new(),
+            only: Vec::new(),
+            include_advisory: Some(false),
+            allow_nightly: None,
+        };
+
+        // A nightly finding is report-only only because `allow_nightly` is
+        // unaccepted, so the advisory gate does not suppress it; a report-only
+        // finding in any other category is advisory content and is suppressed.
+        let filtered = filter(
+            vec![
+                finding("nightly/location-detail", None, Fixability::ReportOnly),
+                finding(
+                    "nightly/panic-immediate-abort",
+                    None,
+                    Fixability::ReportOnly,
+                ),
+                finding("config/rustflags-shadowed", None, Fixability::ReportOnly),
+            ],
+            &gates,
+            today(),
+        );
+
+        assert_eq!(
+            retained(&filtered),
+            ["nightly/location-detail", "nightly/panic-immediate-abort"]
+        );
+    }
+
+    #[test]
+    fn only_still_exempts_a_nightly_finding_from_the_advisory_gate() {
+        let gates = Gates {
+            ignore: vec![ignore(
+                "nightly/location-detail",
+                Some("reason"),
+                None,
+                None,
+            )],
+            only: vec![Selector::parse("nightly/location-detail").unwrap()],
+            include_advisory: Some(false),
+            allow_nightly: None,
+        };
+
+        let filtered = filter(
+            vec![
+                finding("nightly/location-detail", None, Fixability::ReportOnly),
+                finding(
+                    "nightly/panic-immediate-abort",
+                    None,
+                    Fixability::ReportOnly,
+                ),
+            ],
+            &gates,
+            today(),
+        );
+
+        // The explicit request carries the named rule past the gate and past
+        // an ignore that matches it; the other nightly rule lies outside the
+        // `--only` scope, which still restricts the run.
+        assert_eq!(retained(&filtered), ["nightly/location-detail"]);
+    }
+
+    #[test]
+    fn a_closed_only_selector_still_hides_an_unnamed_nightly_finding() {
+        let gates = Gates {
+            ignore: Vec::new(),
+            only: vec![Selector::parse("profile/strip").unwrap()],
+            include_advisory: Some(false),
+            allow_nightly: None,
+        };
+
+        let filtered = filter(
+            vec![
+                finding("nightly/location-detail", None, Fixability::ReportOnly),
+                finding("profile/strip", None, Fixability::Safe),
+            ],
+            &gates,
+            today(),
+        );
+
+        assert_eq!(retained(&filtered), ["profile/strip"]);
     }
 }

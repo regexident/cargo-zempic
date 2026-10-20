@@ -105,7 +105,7 @@ fn materialized_roots_are_distinct_between_calls() {
 }
 
 /// The fixture directories every registry sweep replays on the stable channel.
-const RULE_FIXTURES: [&str; 32] = [
+const RULE_FIXTURES: [&str; 34] = [
     "fully-optimized",
     "bare-release",
     "strip-none",
@@ -137,12 +137,19 @@ const RULE_FIXTURES: [&str; 32] = [
     "heavy-default-features",
     "build-only-note",
     "nightly-missing",
+    "nightly-location-only",
+    "nightly-panic-only",
     "nightly-optimized",
 ];
 
 /// The subset of [`RULE_FIXTURES`] additionally replayed under the nightly
 /// channel, where the nightly rules are not silent.
-const NIGHTLY_RULE_FIXTURES: [&str; 2] = ["nightly-missing", "nightly-optimized"];
+const NIGHTLY_RULE_FIXTURES: [&str; 4] = [
+    "nightly-missing",
+    "nightly-location-only",
+    "nightly-panic-only",
+    "nightly-optimized",
+];
 
 /// Every fixture materializes into a workspace `cargo metadata` resolves.
 #[test]
@@ -2540,6 +2547,7 @@ fn registry_covers_every_concrete_assignment() {
         "lib/heavy-default-features",
         "lib/no-feature-granularity",
         "nightly/location-detail",
+        "nightly/panic-immediate-abort",
         "profile/codegen-units",
         "profile/debug-assertions",
         "profile/debug-info",
@@ -4046,6 +4054,156 @@ fn nightly_location_detail_explains_a_shadowed_declaration() {
 
 // MARK: nightly/panic-immediate-abort
 
+#[test]
+fn nightly_panic_immediate_abort_fires_without_its_flag() {
+    let findings =
+        findings_for_toolchain("nightly-missing", None, ToolchainChannel::Nightly, false);
+
+    assert!(
+        finding_rules(&findings).contains(&"nightly/panic-immediate-abort".to_owned()),
+        "a nightly build without `-Z panic-immediate-abort` must fire: {:?}",
+        finding_rules(&findings)
+    );
+
+    let finding = finding_for(&findings, "nightly/panic-immediate-abort");
+
+    assert_eq!(
+        finding
+            .change
+            .as_ref()
+            .map(|change| change.current.as_str()),
+        Some("unset"),
+        "a build with no flag reports the option unset: {finding:?}"
+    );
+    assert_eq!(
+        finding
+            .change
+            .as_ref()
+            .map(|change| change.recommended.as_str()),
+        Some("panic-immediate-abort"),
+        "the remedy is the bare switch: {finding:?}"
+    );
+    assert_eq!(
+        finding.references,
+        [
+            "https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/panic-immediate-abort.html",
+            "https://doc.rust-lang.org/cargo/reference/unstable.html#build-std",
+        ],
+        "the finding names the flag and the build-std requirement: {finding:?}"
+    );
+    assert!(
+        finding.detail.contains("build-std") && finding.detail.contains("nightly"),
+        "the detail names the build-std requirement and the channel: {finding:?}"
+    );
+    assert!(
+        finding.tradeoff.contains("aborts without unwinding")
+            && finding.tradeoff.contains("build-std"),
+        "the tradeoff names the abort and the build-std requirement: {finding:?}"
+    );
+}
+
+#[test]
+fn nightly_panic_immediate_abort_is_quiet_with_its_flag() {
+    let findings =
+        findings_for_toolchain("nightly-panic-only", None, ToolchainChannel::Nightly, false);
+
+    assert!(
+        !finding_rules(&findings).contains(&"nightly/panic-immediate-abort".to_owned()),
+        "`-Z panic-immediate-abort` must silence the rule: {:?}",
+        finding_rules(&findings)
+    );
+}
+
+#[test]
+fn nightly_rules_ignore_each_others_flags() {
+    let location_only = findings_for_toolchain(
+        "nightly-location-only",
+        None,
+        ToolchainChannel::Nightly,
+        false,
+    );
+    let location_only_rules = finding_rules(&location_only);
+
+    assert!(
+        location_only_rules.contains(&"nightly/panic-immediate-abort".to_owned()),
+        "setting `location-detail=none` must not configure the panic rule: {location_only_rules:?}"
+    );
+    assert!(
+        !location_only_rules.contains(&"nightly/location-detail".to_owned()),
+        "`location-detail=none` must silence its own rule: {location_only_rules:?}"
+    );
+
+    let panic_only =
+        findings_for_toolchain("nightly-panic-only", None, ToolchainChannel::Nightly, false);
+    let panic_only_rules = finding_rules(&panic_only);
+
+    assert!(
+        panic_only_rules.contains(&"nightly/location-detail".to_owned()),
+        "setting `panic-immediate-abort` must not configure the location rule: {panic_only_rules:?}"
+    );
+    assert!(
+        !panic_only_rules.contains(&"nightly/panic-immediate-abort".to_owned()),
+        "`panic-immediate-abort` must silence its own rule: {panic_only_rules:?}"
+    );
+}
+
+#[test]
+fn nightly_rules_are_hidden_on_stable() {
+    let rules = finding_rules(&findings_for_toolchain(
+        "nightly-missing",
+        None,
+        ToolchainChannel::Stable,
+        false,
+    ));
+
+    assert!(
+        !rules.contains(&"nightly/location-detail".to_owned()),
+        "a stable channel must not report a nightly rule: {rules:?}"
+    );
+    assert!(
+        !rules.contains(&"nightly/panic-immediate-abort".to_owned()),
+        "a stable channel must not report a nightly rule: {rules:?}"
+    );
+}
+
+#[test]
+fn nightly_rules_are_hidden_on_beta() {
+    let rules = finding_rules(&findings_for_toolchain(
+        "nightly-missing",
+        None,
+        ToolchainChannel::Beta,
+        false,
+    ));
+
+    assert!(
+        !rules.contains(&"nightly/location-detail".to_owned()),
+        "a beta channel must not report a nightly rule: {rules:?}"
+    );
+    assert!(
+        !rules.contains(&"nightly/panic-immediate-abort".to_owned()),
+        "a beta channel must not report a nightly rule: {rules:?}"
+    );
+}
+
+#[test]
+fn nightly_rules_skip_unlinked_packages() {
+    let rules = finding_rules(&findings_for_toolchain(
+        "library-only",
+        None,
+        ToolchainChannel::Nightly,
+        true,
+    ));
+
+    assert!(
+        !rules.contains(&"nightly/location-detail".to_owned()),
+        "a package with no linked artifact must not report a nightly rule: {rules:?}"
+    );
+    assert!(
+        !rules.contains(&"nightly/panic-immediate-abort".to_owned()),
+        "a package with no linked artifact must not report a nightly rule: {rules:?}"
+    );
+}
+
 /// The nightly findings in `findings`.
 fn nightly_findings(
     findings: &[cargo_zempic::finding::Finding],
@@ -4054,6 +4212,178 @@ fn nightly_findings(
         .iter()
         .filter(|finding| finding.rule.to_string().starts_with("nightly/"))
         .collect()
+}
+
+#[test]
+fn nightly_findings_default_to_report_only() {
+    use cargo_zempic::finding::Fixability;
+
+    let findings =
+        findings_for_toolchain("nightly-missing", None, ToolchainChannel::Nightly, false);
+
+    // Both nightly rules fire on their fixture, so a rule that ignored the gate
+    // would still be caught by its own finding's fixability.
+    assert_eq!(nightly_findings(&findings).len(), 2, "{findings:?}");
+
+    for finding in nightly_findings(&findings) {
+        assert_eq!(
+            finding.fixability,
+            Fixability::ReportOnly,
+            "a nightly finding without the gate must be report-only: {finding:?}"
+        );
+    }
+}
+
+#[test]
+fn nightly_findings_survive_the_advisory_gate() {
+    use cargo_zempic::finding::Fixability;
+
+    let workspace = common::Fixture::new("nightly-missing").materialize();
+    let mut config = analyze_config(&workspace, &[]);
+    config.toolchain = Some(ToolchainChannel::Nightly);
+
+    // A nightly finding is report-only only for want of the accepted gate, so
+    // the advisory gate leaves it visible ahead of `--allow-nightly`.
+    config.gates.include_advisory = Some(false);
+    config.gates.allow_nightly = Some(false);
+
+    let findings = cargo_zempic::analyze(&config)
+        .expect("the analysis succeeds")
+        .findings;
+    let rules = finding_rules(&findings);
+
+    assert_eq!(nightly_findings(&findings).len(), 2, "{findings:?}");
+    for rule in ["nightly/location-detail", "nightly/panic-immediate-abort"] {
+        assert!(
+            rules.contains(&rule.to_owned()),
+            "`{rule}` must appear ahead of the accepted gate: {rules:?}"
+        );
+    }
+    for finding in nightly_findings(&findings) {
+        assert_eq!(
+            finding.fixability,
+            Fixability::ReportOnly,
+            "a nightly finding ahead of the gate must be report-only: {finding:?}"
+        );
+    }
+
+    config.gates.allow_nightly = Some(true);
+
+    let findings = cargo_zempic::analyze(&config)
+        .expect("the analysis succeeds")
+        .findings;
+    let rules = finding_rules(&findings);
+
+    assert!(
+        rules.contains(&"nightly/location-detail".to_owned()),
+        "an accepted nightly remedy survives the advisory gate: {rules:?}"
+    );
+    assert!(
+        rules.contains(&"nightly/panic-immediate-abort".to_owned()),
+        "an accepted nightly remedy survives the advisory gate: {rules:?}"
+    );
+
+    for finding in nightly_findings(&findings) {
+        assert_eq!(
+            finding.fixability,
+            Fixability::Consequential,
+            "an accepted nightly remedy must be consequential: {finding:?}"
+        );
+    }
+}
+
+#[test]
+fn allow_nightly_raises_the_nightly_fixability() {
+    use cargo_zempic::finding::Fixability;
+
+    let findings = findings_for_toolchain("nightly-missing", None, ToolchainChannel::Nightly, true);
+
+    assert_eq!(nightly_findings(&findings).len(), 2, "{findings:?}");
+
+    for finding in nightly_findings(&findings) {
+        assert_eq!(
+            finding.fixability,
+            Fixability::Consequential,
+            "the gate must raise a nightly finding to consequential: {finding:?}"
+        );
+    }
+}
+
+#[test]
+fn configured_allow_nightly_raises_the_nightly_fixability() {
+    use cargo_zempic::finding::Fixability;
+
+    let workspace = common::Fixture::new("nightly-missing").materialize();
+    std::fs::write(
+        workspace.root().join("zempic.toml"),
+        "schema_version = 1\n[analysis]\nallow_nightly = true\n",
+    )
+    .expect("the configuration is written");
+
+    let mut config = analyze_config(&workspace, &[]);
+    config.toolchain = Some(ToolchainChannel::Nightly);
+    config.gates.allow_nightly = None;
+
+    let findings = cargo_zempic::analyze(&config)
+        .expect("the analysis succeeds")
+        .findings;
+
+    assert_eq!(nightly_findings(&findings).len(), 2, "{findings:?}");
+
+    for finding in nightly_findings(&findings) {
+        assert_eq!(
+            finding.fixability,
+            Fixability::Consequential,
+            "the configured gate must reach the rule evaluation: {finding:?}"
+        );
+    }
+}
+
+#[test]
+fn nightly_findings_point_at_the_intended_config_file() {
+    let findings =
+        findings_for_toolchain("nightly-missing", None, ToolchainChannel::Nightly, false);
+
+    for finding in nightly_findings(&findings) {
+        let location = finding
+            .location
+            .as_ref()
+            .unwrap_or_else(|| panic!("a nightly finding must carry a location: {finding:?}"));
+
+        assert!(
+            location.span.file.as_str().ends_with(".cargo/config.toml"),
+            "a workspace with no rustflags points at its own cargo configuration: {:?}",
+            location.span.file
+        );
+        assert_eq!(location.span.key, "build.rustflags");
+        assert_eq!(location.span.line, 1);
+        assert_eq!(location.span.column, 1);
+    }
+}
+
+#[test]
+fn nightly_findings_use_medium_confidence_for_an_unevaluated_cfg_table() {
+    use cargo_zempic::finding::Confidence;
+
+    let findings = findings_for_toolchain(
+        "rustflags-cfg-table",
+        Some("x86_64-unknown-linux-gnu"),
+        ToolchainChannel::Nightly,
+        false,
+    );
+
+    let nightly = nightly_findings(&findings);
+
+    assert_eq!(nightly.len(), 2, "{findings:?}");
+
+    for finding in nightly {
+        assert_eq!(
+            finding.confidence,
+            Confidence::Medium,
+            "a live `cfg(...)` table whose predicate was not evaluated must cap \
+             confidence: {finding:?}"
+        );
+    }
 }
 
 // MARK: Knowledge base

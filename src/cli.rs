@@ -226,7 +226,9 @@ pub struct AnalysisArgs {
     #[arg(long = "include-advisory", overrides_with = "no_include_advisory")]
     pub include_advisory: bool,
 
-    /// Suppress both the advisory notes and every report-only finding.
+    /// Suppress the advisory notes and report-only findings. Nightly findings
+    /// stay visible, since a nightly rule reports report-only until
+    /// `--allow-nightly`.
     #[arg(long = "no-include-advisory")]
     pub no_include_advisory: bool,
 

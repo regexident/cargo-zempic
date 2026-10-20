@@ -27,6 +27,15 @@ use camino::Utf8Path;
 const LOCATION_DETAIL_REFERENCE: &str =
     "https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/location-detail.html";
 
+/// The unstable book's page for `-Z panic-immediate-abort`.
+const PANIC_IMMEDIATE_ABORT_REFERENCE: &str =
+    "https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/panic-immediate-abort.html";
+
+/// Cargo's documentation of the `-Z build-std` option the panic strategy
+/// requires.
+const BUILD_STD_REFERENCE: &str =
+    "https://doc.rust-lang.org/cargo/reference/unstable.html#build-std";
+
 /// Reports a nightly build whose panic locations are retained.
 ///
 /// `-Z location-detail=none` makes the compiler drop the source location a
@@ -117,6 +126,74 @@ impl Rule for NightlyLocationDetailRule {
                                names the file and line it came from. The flag is unstable, so \
                                an upgrade of nightly may change or remove it.",
                     references: vec![LOCATION_DETAIL_REFERENCE.to_owned()],
+                },
+            ));
+        }
+
+        findings
+    }
+}
+
+/// Reports a nightly build whose panics unwind instead of aborting
+/// immediately.
+///
+/// `-Z panic-immediate-abort` makes the standard library's panic path abort
+/// rather than unwind. The flag is unstable and needs the standard library
+/// rebuilt with the same strategy, so it only takes effect in a
+/// `-Z build-std` build.
+pub struct NightlyPanicImmediateAbortRule;
+
+/// The instance registered for [`NightlyPanicImmediateAbortRule`].
+pub const NIGHTLY_PANIC_IMMEDIATE_ABORT_RULE: NightlyPanicImmediateAbortRule =
+    NightlyPanicImmediateAbortRule;
+
+impl Rule for NightlyPanicImmediateAbortRule {
+    fn evaluate(&self, context: &RuleContext<'_>) -> Vec<Finding> {
+        if !context.toolchain.is_nightly() {
+            return Vec::new();
+        }
+
+        let metadata = registered("nightly/panic-immediate-abort");
+        let mut findings = Vec::new();
+
+        for (package, resolved) in context.cargo_configs {
+            if !config_rules_apply(context, package) {
+                continue;
+            }
+
+            // The option is a switch with no value, so any occurrence counts as
+            // configured however it is spelled; its value, when one is
+            // attached, is not a state this rule distinguishes.
+            if unstable_flag(&resolved.flags, "panic-immediate-abort").is_some() {
+                continue;
+            }
+
+            findings.push(build(
+                metadata,
+                context,
+                Some(package.clone()),
+                resolved,
+                FindingFields {
+                    change: Change {
+                        current: "unset".to_owned(),
+                        recommended: "panic-immediate-abort".to_owned(),
+                    },
+                    title: "The build aborts immediately on panic",
+                    detail: &format!(
+                        "`-Z panic-immediate-abort` is not among the live rustflags for \
+                         `{package}`, so a panic unwinds through the standard library's unwind \
+                         machinery instead of stopping immediately. The flag is a nightly \
+                         compiler option, and it only takes effect in a `-Z build-std` build \
+                         whose standard library is compiled with the same strategy."
+                    ),
+                    tradeoff: "A panic aborts without unwinding, so `catch_unwind` never \
+                               recovers and the destructors of the values on the stack do not \
+                               run. The technique needs a `-Z build-std` build and may break \
+                               across nightly releases.",
+                    references: vec![
+                        PANIC_IMMEDIATE_ABORT_REFERENCE.to_owned(),
+                        BUILD_STD_REFERENCE.to_owned(),
+                    ],
                 },
             ));
         }

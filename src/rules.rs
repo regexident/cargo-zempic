@@ -257,6 +257,15 @@ pub fn registry() -> &'static [RuleMetadata] {
             documentation: include_str!("rules/docs/nightly/location-detail.md"),
         },
         RuleMetadata {
+            rule: &crate::rules::nightly::NIGHTLY_PANIC_IMMEDIATE_ABORT_RULE,
+            id: "nightly/panic-immediate-abort",
+            tier: crate::finding::Tier::Behavioral,
+            magnitude: crate::finding::Magnitude::Moderate,
+            fixability: crate::finding::Fixability::Consequential,
+            summary: "Reporting a nightly build whose panics unwind instead of aborting",
+            documentation: include_str!("rules/docs/nightly/panic-immediate-abort.md"),
+        },
+        RuleMetadata {
             rule: &crate::rules::profile::IGNORED_MEMBER_PROFILE_RULE,
             id: "workspace/ignored-member-profile",
             tier: crate::finding::Tier::Foundational,
