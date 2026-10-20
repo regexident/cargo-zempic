@@ -251,6 +251,7 @@ fn build(
         location: location.map(Location::new),
         title: title.to_owned(),
         detail,
+        advice: None,
         tradeoff: tradeoff.to_owned(),
         references: Vec::new(),
     }

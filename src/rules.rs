@@ -680,6 +680,7 @@ mod tests {
             location: None,
             title: "t".to_owned(),
             detail: "d".to_owned(),
+            advice: None,
             tradeoff: "cost".to_owned(),
             references: Vec::new(),
         }

@@ -306,6 +306,7 @@ fn build(
         ))),
         title: fields.title.to_owned(),
         detail: fields.detail.to_owned(),
+        advice: None,
         tradeoff: fields.tradeoff.to_owned(),
         references: fields.references,
     }

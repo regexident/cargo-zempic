@@ -701,6 +701,8 @@ pub struct Finding {
     pub title: String,
     /// The finding's explanation.
     pub detail: String,
+    /// A knowledge-base recommendation about the finding's subject, when one applies.
+    pub advice: Option<String>,
     /// The cost of acting on the finding. Mandatory and never empty.
     pub tradeoff: String,
     /// Links to sources, carrying no size figures.
@@ -1000,6 +1002,7 @@ mod tests {
             location: None,
             title: "t".to_owned(),
             detail: "d".to_owned(),
+            advice: None,
             tradeoff: tradeoff.to_owned(),
             references: Vec::new(),
         }

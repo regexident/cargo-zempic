@@ -123,9 +123,18 @@ fn render_row(finding: &Finding, resolution: &Resolution) -> String {
         cell(finding.effort.as_str()),
         cell(finding.runtime_cost.as_str()),
         cell(finding.fixability.as_str()),
-        cell(&finding.detail),
+        cell(&detail_with_advice(finding)),
         cell(&finding.tradeoff),
     )
+}
+
+/// The Detail cell's text: the detail alone, or the detail with the advice
+/// appended behind an `Advice:` label when the finding carries one.
+fn detail_with_advice(finding: &Finding) -> String {
+    match &finding.advice {
+        Some(advice) => format!("{} Advice: {advice}", finding.detail),
+        None => finding.detail.clone(),
+    }
 }
 
 /// Escape `text` for a Markdown table cell.

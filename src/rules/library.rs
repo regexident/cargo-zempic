@@ -221,6 +221,7 @@ fn build(
         location: None,
         title: title.to_owned(),
         detail,
+        advice: None,
         tradeoff: tradeoff.to_owned(),
         references: Vec::new(),
     }

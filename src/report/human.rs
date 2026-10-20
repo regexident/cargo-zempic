@@ -249,7 +249,7 @@ fn render_finding(finding: &Finding, report: &Report, color: bool, width: usize)
         finding.fixability.as_str(),
     ));
 
-    output.push_str(&wrap(&finding.detail, 8, width));
+    output.push_str(&wrap(&detail_with_advice(finding), 8, width));
 
     let tradeoff_label = "Tradeoff:"
         .bold()
@@ -262,6 +262,15 @@ fn render_finding(finding: &Finding, report: &Report, color: bool, width: usize)
     ));
 
     output
+}
+
+/// The detail paragraph's text: the detail alone, or the detail with the advice
+/// appended behind an `Advice:` label when the finding carries one.
+fn detail_with_advice(finding: &Finding) -> String {
+    match &finding.advice {
+        Some(advice) => format!("{} Advice: {advice}", finding.detail),
+        None => finding.detail.clone(),
+    }
 }
 
 /// The right-hand column of a finding's first line.

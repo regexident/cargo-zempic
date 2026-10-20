@@ -30,6 +30,7 @@ expression: document
       "location": null,
       "title": "Symbols are retained in the linked artifact",
       "detail": "The symbol table and the strings it references are kept in the linked artifact even though they are not needed to run it.",
+      "advice": null,
       "tradeoff": "Stripping removes function names from backtraces and profiler output.",
       "references": []
     },
@@ -48,6 +49,7 @@ expression: document
       "location": null,
       "title": "The profile sets nothing explicitly",
       "detail": "Every setting falls back to cargo's defaults, which favor compile time over a small artifact. The other findings in this report name the settings to set.",
+      "advice": null,
       "tradeoff": "There is nothing to lose by configuring the profile.",
       "references": []
     },
@@ -69,6 +71,7 @@ expression: document
       "location": null,
       "title": "The optimization level does not target size",
       "detail": "The compiler optimizes for speed. Optimizing for size lets it drop code that exists only to run faster.",
+      "advice": null,
       "tradeoff": "Runtime cost, pronounced with `\"z\"` on compute-heavy code.",
       "references": []
     },
@@ -90,6 +93,7 @@ expression: document
       "location": null,
       "title": "Link-time optimization is partial or disabled",
       "detail": "Optimizing across crate boundaries removes code a per-crate build must keep.",
+      "advice": null,
       "tradeoff": "Link time rises substantially.",
       "references": []
     },
@@ -111,6 +115,7 @@ expression: document
       "location": null,
       "title": "The crate is split across several code generation units",
       "detail": "A single code generation unit lets `profile/lto` optimize across the whole crate; with several units, that optimization is limited.",
+      "advice": null,
       "tradeoff": "Compiles are slower; the setting is what unlocks link-time optimization.",
       "references": []
     },
@@ -132,6 +137,7 @@ expression: document
       "location": null,
       "title": "The profile unwinds instead of aborting",
       "detail": "Unwinding carries the machinery that walks the stack and runs destructors. Aborting on panic lets the compiler drop it.",
+      "advice": null,
       "tradeoff": "Aborting loses unwinding: a `catch_unwind` in the workspace or any dependency will no longer recover from a panic. The setting applies workspace-wide, because `panic` cannot be set per package.",
       "references": []
     }

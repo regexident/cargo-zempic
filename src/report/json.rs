@@ -98,6 +98,7 @@ struct FindingObject {
     location: Option<LocationObject>,
     title: String,
     detail: String,
+    advice: Option<String>,
     tradeoff: String,
     references: Vec<String>,
 }
@@ -124,6 +125,7 @@ impl FindingObject {
                 .map(|location| LocationObject::from_location(location, root)),
             title: finding.title.clone(),
             detail: finding.detail.clone(),
+            advice: finding.advice.clone(),
             tradeoff: finding.tradeoff.clone(),
             references: finding.references.clone(),
         }

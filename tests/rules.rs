@@ -1252,6 +1252,7 @@ fn finding(
         location: None,
         title: "title".to_owned(),
         detail: "detail".to_owned(),
+        advice: None,
         tradeoff: "tradeoff".to_owned(),
         references: Vec::new(),
     }
@@ -1707,6 +1708,7 @@ fn json_report() -> cargo_zempic::report::Report {
         detail: "detail".to_owned(),
         tradeoff: "tradeoff".to_owned(),
         references: vec!["https://example.invalid".to_owned()],
+        advice: Some("advice".to_owned()),
     };
     let next = finding(
         "profile/lto",
@@ -1760,6 +1762,42 @@ fn json_document_matches_the_checked_in_key_sets() {
 
     assert!(document.contains("\"schema_version\": 1"), "{document}");
     assert!(document.ends_with("}\n"), "{document}");
+}
+
+#[test]
+fn json_document_emits_advice_as_a_string_or_null() {
+    let report = json_report();
+    let document: serde_json::Value = serde_json::from_str(
+        &cargo_zempic::report::json::render(&report).expect("the document renders"),
+    )
+    .expect("the document is JSON");
+
+    assert_eq!(
+        document["findings"][0]["advice"],
+        serde_json::json!("advice")
+    );
+    assert_eq!(document["findings"][2]["advice"], serde_json::Value::Null);
+}
+
+#[test]
+fn markdown_renderer_folds_advice_into_the_detail_cell() {
+    use cargo_zempic::finding::{Magnitude, Severity, Tier};
+
+    let mut advised = finding(
+        "profile/strip",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Large,
+        None,
+    );
+    advised.advice = Some("keep it small".to_owned());
+
+    let rendered = cargo_zempic::report::markdown::render(&report_of(vec![advised]));
+
+    assert!(
+        rendered.contains("| detail Advice: keep it small |"),
+        "{rendered}"
+    );
 }
 
 #[test]

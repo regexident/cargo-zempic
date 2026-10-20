@@ -26,6 +26,7 @@
     "location",
     "title",
     "detail",
+    "advice",
     "tradeoff",
     "references"
   ],
