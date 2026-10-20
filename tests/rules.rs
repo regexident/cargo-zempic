@@ -3323,17 +3323,26 @@ fn feature_trim_fires_on_a_default_feature_the_knowledge_base_flags() {
         finding.title,
         "Default feature `telemetry` of `metrics` can be trimmed"
     );
-    assert!(
-        finding
-            .detail
-            .contains("disable unless the service exports metrics"),
-        "{}",
-        finding.detail
+    assert_eq!(
+        finding.detail,
+        "`metrics` 1.2.0 enables `telemetry` through its default features."
     );
     assert!(
-        !finding.detail.contains("Advice verified through"),
-        "{}",
-        finding.detail
+        finding
+            .advice
+            .as_deref()
+            .is_some_and(|advice| advice.contains("disable unless the service exports metrics")),
+        "{:?}",
+        finding.advice
+    );
+    assert!(
+        !finding
+            .advice
+            .as_deref()
+            .unwrap()
+            .contains("Advice verified through"),
+        "{:?}",
+        finding.advice
     );
 }
 
@@ -3356,11 +3365,14 @@ fn feature_trim_reports_a_stale_entry_as_report_only() {
     assert_eq!(finding.fixability, Fixability::ReportOnly);
     assert!(
         finding
-            .detail
+            .advice
+            .as_deref()
+            .unwrap()
             .ends_with("Advice verified through metrics 1.1.0; you have 1.2.0."),
-        "{}",
-        finding.detail
+        "{:?}",
+        finding.advice
     );
+    assert!(!finding.detail.contains("Advice verified through"));
 }
 
 #[test]
@@ -3420,9 +3432,12 @@ fn feature_trim_applies_the_embedded_entry() {
     assert_eq!(finding.fixability, Fixability::Consequential);
     assert_eq!(finding.magnitude, Magnitude::Moderate);
     assert!(
-        finding.detail.contains("Embeds Unicode data tables"),
-        "{}",
-        finding.detail
+        finding
+            .advice
+            .as_deref()
+            .is_some_and(|advice| advice.contains("Embeds Unicode data tables")),
+        "{:?}",
+        finding.advice
     );
 }
 
@@ -3436,10 +3451,9 @@ fn feature_trim_honors_a_configured_override() {
 
     assert_eq!(finding.fixability, Fixability::ReportOnly);
     assert_eq!(finding.magnitude, Magnitude::Small);
-    assert!(
-        finding.detail.contains("Custom advice for the fixture."),
-        "{}",
-        finding.detail
+    assert_eq!(
+        finding.advice.as_deref(),
+        Some("Custom advice for the fixture.")
     );
     assert!(
         !finding.detail.contains("Embeds Unicode data tables"),

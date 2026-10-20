@@ -938,14 +938,15 @@ impl Rule for FeatureTrimRule {
                 let key = declared_key(dependency);
 
                 for feature in trimmable_features(entry, &default_features, &requested_features) {
-                    let mut detail = format!(
-                        "`{}` {} enables `{}` through its default features. Advice: {}",
-                        resolved.name, resolved.version, feature.name, feature.advice
+                    let detail = format!(
+                        "`{}` {} enables `{}` through its default features.",
+                        resolved.name, resolved.version, feature.name
                     );
+                    let mut advice = feature.advice.to_string();
 
                     if stale {
-                        detail.push(' ');
-                        detail.push_str(&crate::knowledge::stale_note(
+                        advice.push(' ');
+                        advice.push_str(&crate::knowledge::stale_note(
                             &resolved.name,
                             &entry.verified_through,
                             &resolved.version,
@@ -977,6 +978,7 @@ impl Rule for FeatureTrimRule {
                     );
 
                     finding.magnitude = feature.magnitude;
+                    finding.advice = Some(advice);
                     findings.push(finding);
                 }
             }
