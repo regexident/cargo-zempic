@@ -606,6 +606,31 @@ pub fn documentation_path(id: &RuleId) -> String {
     format!("{}.md", id.path_text())
 }
 
+/// The rule reference, assembled from the documentation embedded in the binary.
+///
+/// The result is a complete Markdown document: a title, a one-line note on its
+/// origin, and then the documentation of every rule in [`registry`] order,
+/// separated by thematic breaks. Each document contributes its content with
+/// trailing whitespace removed, so the separators alone govern the spacing
+/// between entries. The reference is generated rather than checked in
+/// separately, which lets a test hold `docs/rules.md` to exactly this text and
+/// keep the two from drifting.
+pub fn reference() -> String {
+    let mut reference = String::from(
+        "# Rule reference\n\
+         \n\
+         This reference is generated from the rule documentation embedded in the binary.\n",
+    );
+
+    for metadata in registry() {
+        reference.push_str("\n---\n\n");
+        reference.push_str(metadata.documentation.trim_end());
+        reference.push('\n');
+    }
+
+    reference
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

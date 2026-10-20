@@ -248,3 +248,15 @@ fn snapshots_carry_no_absolute_path() {
         );
     }
 }
+
+#[test]
+fn rule_reference_matches_registry_documentation() {
+    let path = camino::Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/rules.md");
+    let checked_in = std::fs::read_to_string(&path).expect("the rule reference is readable");
+    let generated = cargo_zempic::rules::reference();
+
+    assert_eq!(
+        checked_in, generated,
+        "`{path}` differs from the reference generated from the rule documentation"
+    );
+}
