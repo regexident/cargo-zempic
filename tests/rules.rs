@@ -1270,6 +1270,62 @@ fn report_of(findings: Vec<cargo_zempic::finding::Finding>) -> cargo_zempic::rep
     .expect("the report assembles")
 }
 
+/// Render `report` and reduce it to the findings' blocks, without the header,
+/// the tier headings, the summary and the legend.
+///
+/// A block starts at a title line and ends after its last row. The rest of the
+/// document is of no interest to the block tests, and it carries the workspace
+/// path, which is long enough to overflow any width.
+///
+/// The document renders at 1000 columns, because a row that wraps at a narrower
+/// width is indistinguishable from the header's own lines and would be mistaken
+/// for prose; the wrapped layout is exercised by its own test.
+fn unwrapped_blocks(report: &cargo_zempic::report::Report) -> String {
+    let rendered = cargo_zempic::report::human::render(report, false, 1000);
+    let mut blocks = String::new();
+    let mut inside = false;
+
+    for line in rendered.lines() {
+        if line.starts_with("  ╭ ") {
+            inside = true;
+        } else if !(line.starts_with("  │ ") || line.starts_with("  ╰ ")) {
+            inside = false;
+        }
+
+        if inside {
+            blocks.push_str(line);
+            blocks.push('\n');
+        }
+    }
+
+    blocks
+}
+
+/// The text with every ANSI escape sequence removed.
+///
+/// A sequence runs from `ESC [` up to and including its final byte, which lies
+/// in `'@'..='~'`; the bytes that remain are the visible text alone.
+fn strip_ansi(text: &str) -> String {
+    let mut output = String::new();
+    let mut characters = text.chars();
+
+    while let Some(character) = characters.next() {
+        if character == '\u{1b}' {
+            for next in characters.by_ref() {
+                let final_byte = next != '[' && ('@'..='~').contains(&next);
+
+                if final_byte {
+                    break;
+                }
+            }
+        } else {
+            output.push(character);
+        }
+    }
+
+    output
+}
+
 /// A key span pointing at `relative` under the resolution's workspace root.
 fn span_in(root: &camino::Utf8Path, relative: &str, line: usize) -> KeySpan {
     KeySpan {
@@ -1282,77 +1338,29 @@ fn span_in(root: &camino::Utf8Path, relative: &str, line: usize) -> KeySpan {
 
 #[test]
 fn human_renderer_emits_a_section_per_non_empty_tier() {
-    use cargo_zempic::finding::{Magnitude, Severity, Tier};
-
-    let resolution = fixture_resolution();
-    let mut findings = vec![
-        finding(
-            "profile/strip",
-            Tier::Foundational,
-            Severity::High,
-            Magnitude::Large,
-            Some(cargo_zempic::finding::Change {
-                current: "unset".to_owned(),
-                recommended: "\"symbols\"".to_owned(),
-            }),
-        ),
-        finding(
-            "profile/debug-info",
-            Tier::Foundational,
-            Severity::High,
-            Magnitude::Moderate,
-            None,
-        ),
-        finding(
-            "profile/lto",
-            Tier::Compiler,
-            Severity::Medium,
-            Magnitude::Moderate,
-            None,
-        ),
-        finding(
-            "deps/duplicate-versions",
-            Tier::Dependencies,
-            Severity::Medium,
-            Magnitude::Moderate,
-            None,
-        ),
-        finding(
-            "deps/workspace-resolver",
-            Tier::Dependencies,
-            Severity::High,
-            Magnitude::Moderate,
-            None,
-        ),
-    ];
-
-    findings[1].location = Some(cargo_zempic::finding::Location::new(span_in(
-        &resolution.workspace_root,
-        "Cargo.toml",
-        6,
-    )));
-
-    let report = cargo_zempic::report::Report::new(
-        resolution,
-        findings,
-        Vec::new(),
-        Vec::new(),
-        cargo_zempic::report::ReportSettings::default(),
-    )
-    .unwrap();
+    let report = five_finding_report();
 
     let rendered = cargo_zempic::report::human::render(&report, false, 80);
 
-    assert!(rendered.contains("TIER 1  FOUNDATIONAL"), "{rendered}");
-    assert!(rendered.contains("TIER 2  COMPILER"), "{rendered}");
-    assert!(rendered.contains("TIER 4  DEPENDENCIES"), "{rendered}");
+    assert!(
+        rendered.contains("── TIER 1 · FOUNDATIONAL ─"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("── TIER 2 · COMPILER ─"), "{rendered}");
+    assert!(
+        rendered.contains("── TIER 4 · DEPENDENCIES ─"),
+        "{rendered}"
+    );
     assert!(!rendered.contains("TIER 3"), "{rendered}");
     assert!(!rendered.contains("TIER 5"), "{rendered}");
     assert!(rendered.contains("2 findings"), "{rendered}");
     assert!(rendered.contains("1 finding"), "{rendered}");
     assert!(rendered.contains("unset -> \"symbols\""), "{rendered}");
-    assert!(rendered.contains("effort: trivial   runtime cost: none   fix: safe"));
-    assert!(rendered.contains("Tradeoff: tradeoff"), "{rendered}");
+    assert!(
+        rendered.contains("  │ cost      effort trivial · runtime none · fix safe"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("  ╰ tradeoff  tradeoff"), "{rendered}");
 }
 
 #[test]
@@ -1396,13 +1404,457 @@ fn human_renderer_renders_the_change_column_or_the_location() {
 
     let rendered = cargo_zempic::report::human::render(&report, false, 80);
 
-    assert!(rendered.contains("unset -> \"symbols\""), "{rendered}");
-    assert!(rendered.contains(".cargo/config.toml"), "{rendered}");
+    assert!(
+        rendered.contains("  │ change    unset -> \"symbols\""),
+        "{rendered}"
+    );
+    assert!(
+        rendered
+            .lines()
+            .any(|line| line.starts_with("  │ at        .cargo/config.toml:3")),
+        "{rendered}"
+    );
 
     let absolute = report.resolution.workspace_root.join(".cargo/config.toml");
     assert!(
         !rendered.contains(absolute.as_str()),
         "a location inside the root must be relative: {rendered}"
+    );
+}
+
+#[test]
+fn human_renderer_color_never_changes_the_layout() {
+    use cargo_zempic::finding::Location;
+
+    let root = fixture_resolution().workspace_root;
+    let findings = five_finding_report().findings;
+
+    let mut package = findings[0].clone();
+    package.package = Some("alpha".to_owned());
+    package.advice = Some("Set the profile.".to_owned());
+
+    let mut located = findings[2].clone();
+    located.location = Some(Location::new(span_in(&root, "Cargo.toml", 6)));
+
+    let report = report_of(vec![
+        package,
+        findings[1].clone(),
+        located,
+        findings[3].clone(),
+        findings[4].clone(),
+    ]);
+    let plain = cargo_zempic::report::human::render(&report, false, 1000);
+    let colored = cargo_zempic::report::human::render(&report, true, 1000);
+
+    assert!(colored.contains('\u{1b}'), "{colored:?}");
+
+    let plain_lines: Vec<&str> = plain.lines().collect();
+    let colored_lines: Vec<&str> = colored.lines().collect();
+
+    assert_eq!(plain_lines.len(), colored_lines.len());
+
+    for (plain_line, colored_line) in plain_lines.iter().zip(&colored_lines) {
+        assert_eq!(strip_ansi(colored_line), *plain_line);
+    }
+}
+
+/// The ANSI escape sequence that opens `line`'s first styled run.
+fn opening_style(line: &str) -> Option<&str> {
+    let start = line.find('\u{1b}')?;
+    let end = start + line[start..].find('m')? + 1;
+
+    Some(&line[start..end])
+}
+
+#[test]
+fn human_renderer_paints_every_gutter_glyph_in_the_severity_style() {
+    use cargo_zempic::finding::{Magnitude, Severity, Tier};
+
+    let mut wrapped = finding(
+        "profile/strip",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Large,
+        None,
+    );
+    wrapped.detail = "The symbol table is kept ".repeat(10);
+    wrapped.advice = Some("Disable the debug symbols ".repeat(10));
+    wrapped.tradeoff = "Backtraces lose their names ".repeat(10);
+
+    let mut medium = finding(
+        "profile/lto",
+        Tier::Compiler,
+        Severity::Medium,
+        Magnitude::Moderate,
+        None,
+    );
+    medium.tradeoff = "Link time rises substantially.".to_owned();
+
+    let report = report_of(vec![wrapped, medium]);
+    let colored = cargo_zempic::report::human::render(&report, true, 80);
+    let glyphs = ['╭', '│', '╰'];
+    let mut blocks: Vec<Vec<&str>> = Vec::new();
+
+    for line in colored.lines() {
+        let head = strip_ansi(line);
+
+        if head.chars().nth(2).is_some_and(|glyph| glyph == '╭') {
+            blocks.push(Vec::new());
+        }
+
+        if head
+            .chars()
+            .nth(2)
+            .is_some_and(|glyph| glyphs.contains(&glyph))
+        {
+            blocks
+                .last_mut()
+                .expect("a gutter line follows a title")
+                .push(line);
+        }
+    }
+
+    assert_eq!(blocks.len(), 2, "both findings render a block");
+
+    for block in &blocks {
+        let styles: Vec<&str> = block
+            .iter()
+            .map(|line| {
+                opening_style(line).unwrap_or_else(|| panic!("an unpainted gutter: {line:?}"))
+            })
+            .collect();
+
+        assert!(
+            styles.windows(2).all(|pair| pair[0] == pair[1]),
+            "every gutter glyph carries one style: {styles:?}"
+        );
+    }
+
+    assert_ne!(
+        opening_style(blocks[0][0]),
+        opening_style(blocks[1][0]),
+        "each severity paints its own block"
+    );
+}
+
+#[test]
+fn human_renderer_wraps_every_row_inside_the_width() {
+    use cargo_zempic::finding::{Magnitude, Severity, Tier};
+
+    let mut long = finding(
+        "profile/strip",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Large,
+        None,
+    );
+
+    long.detail = "The symbol table is kept ".repeat(10);
+    long.advice = Some("Disable the debug symbols ".repeat(10));
+    long.tradeoff = "Backtraces lose their names ".repeat(10);
+
+    let report = report_of(vec![long]);
+    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+    let lines: Vec<&str> = rendered.lines().collect();
+    let block: Vec<&str> = lines
+        .iter()
+        .copied()
+        .skip_while(|line| !line.starts_with("  ╭ "))
+        .take_while(|line| !line.starts_with("SUMMARY"))
+        .collect();
+
+    assert!(block.len() > 8, "every row wraps");
+
+    for line in &block {
+        assert!(line.chars().count() <= 80, "a line overflows: {line:?}");
+    }
+
+    for row in ["why       ", "advice    ", "tradeoff  "] {
+        assert!(
+            block
+                .iter()
+                .any(|line| line.starts_with(&format!("  │ {row}"))
+                    || line.starts_with(&format!("  ╰ {row}"))),
+            "the `{row}` row is missing"
+        );
+    }
+
+    const VALUE_COLUMN: usize = 14;
+    const GUTTER_GLYPH_COLUMNS: usize = 4;
+
+    let labels = ["cost", "why", "advice", "tradeoff"];
+    let rows = labels
+        .iter()
+        .filter(|label| {
+            block.iter().any(|line| {
+                matches!(line.chars().nth(2), Some('│' | '╰'))
+                    && line.chars().skip(4).collect::<String>().starts_with(*label)
+            })
+        })
+        .count();
+
+    assert_eq!(rows, labels.len(), "every row is present");
+
+    let gutter = |line: &str| line.chars().nth(2);
+
+    let continuation = |line: &&str| {
+        line.chars()
+            .skip(3)
+            .take(VALUE_COLUMN - GUTTER_GLYPH_COLUMNS)
+            .all(|character| character == ' ')
+            && line
+                .chars()
+                .skip(VALUE_COLUMN)
+                .any(|character| !character.is_whitespace())
+    };
+
+    let wrapped_rows = block
+        .iter()
+        .filter(|line| !line.starts_with("  ╭ ") && !line.is_empty())
+        .filter(|line| continuation(line))
+        .filter(|line| gutter(line) == Some('│'))
+        .count();
+
+    assert!(
+        wrapped_rows > 0,
+        "the wrapped rows print continuation lines"
+    );
+
+    let corner = block
+        .iter()
+        .rposition(|line| gutter(line) == Some('╰'))
+        .expect("the block closes with `╰`");
+
+    assert_eq!(
+        corner,
+        block.iter().filter(|line| !line.is_empty()).count() - 1,
+        "the corner closes the block's last line, `{:#?}`",
+        &block[corner..]
+    );
+    assert!(
+        block[corner]
+            .chars()
+            .skip(VALUE_COLUMN)
+            .any(|character| !character.is_whitespace()),
+        "the corner shares its line with the last row's text, `{:#?}`",
+        block[corner]
+    );
+
+    let closers = block
+        .iter()
+        .filter(|line| gutter(line) == Some('╰'))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        closers.len(),
+        1,
+        "a block has exactly one closing corner, `{closers:#?}`"
+    );
+    assert!(
+        closers[0].starts_with("  ╰ ") || closers[0].starts_with("  ╰         "),
+        "the corner sits in the gutter of the last row's text, `{}`",
+        closers[0]
+    );
+
+    assert!(
+        block[..corner]
+            .iter()
+            .skip(1)
+            .filter(|line| !line.is_empty())
+            .all(|line| matches!(gutter(line), Some('│' | '╰'))),
+        "the border runs through every line between the title and the corner"
+    );
+
+    // Every line of a block starts its value in the same column: the rows
+    // because their label is padded, the continuation lines because they blank
+    // the label and the space after it.
+    for line in block
+        .iter()
+        .filter(|line| !line.starts_with("  ╭ ") && !line.is_empty())
+    {
+        assert_ne!(
+            line.chars().nth(VALUE_COLUMN),
+            Some(' '),
+            "the value starts at column {VALUE_COLUMN}: {line:?}"
+        );
+    }
+}
+
+#[test]
+fn human_renderer_renders_rows_in_order_and_omits_absent_ones() {
+    use cargo_zempic::finding::{Change, Location, Magnitude, Severity, Tier};
+
+    let resolution = fixture_resolution();
+    let root = resolution.workspace_root.clone();
+    let mut full = finding(
+        "profile/strip",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Large,
+        Some(Change {
+            current: "unset".to_owned(),
+            recommended: "\"symbols\"".to_owned(),
+        }),
+    );
+    full.package = Some("alpha".to_owned());
+    full.location = Some(Location::new(span_in(&root, "Cargo.toml", 6)));
+    full.advice = Some("Set the profile.".to_owned());
+
+    let bare = finding(
+        "profile/lto",
+        Tier::Compiler,
+        Severity::Low,
+        Magnitude::Small,
+        None,
+    );
+
+    let report = cargo_zempic::report::Report::new(
+        resolution,
+        vec![full, bare],
+        Vec::new(),
+        Vec::new(),
+        cargo_zempic::report::ReportSettings::default(),
+    )
+    .expect("the report assembles");
+
+    let rendered = unwrapped_blocks(&report);
+
+    let labels = [
+        "  │ package   ",
+        "  │ change    ",
+        "  │ at        ",
+        "  │ cost      ",
+        "  │ why       ",
+        "  │ advice    ",
+        "  ╰ tradeoff  ",
+    ];
+    let mut found = 0;
+    let mut offset = 0;
+
+    for label in labels {
+        let position = match rendered.find(label) {
+            Some(position) => position,
+            None => panic!("the `{label}` row is missing"),
+        };
+
+        assert!(position >= offset, "the `{label}` row is out of order");
+
+        offset = position;
+        found += 1;
+    }
+
+    assert_eq!(found, labels.len());
+    assert!(rendered.contains("  │ at        Cargo.toml:6  profile.release.strip"));
+    assert!(rendered.contains("  │ cost      effort trivial · runtime none · fix safe"));
+
+    let bare_block = rendered
+        .split("  ╭ LOW")
+        .nth(1)
+        .expect("the bare finding has a block");
+
+    for absent in ["│ package", "│ change", "│ at", "│ advice"] {
+        assert!(
+            !bare_block.contains(absent),
+            "an absent field must not print a row: {absent}"
+        );
+    }
+}
+
+#[test]
+fn human_renderer_spans_the_title_line_to_the_width() {
+    let rendered = cargo_zempic::report::human::render(&five_finding_report(), false, 80);
+
+    let title = rendered
+        .lines()
+        .find(|line| line.starts_with("  ╭ HIGH  profile/strip"))
+        .expect("the title line is present");
+
+    assert_eq!(title.chars().count(), 80, "{title:?}");
+    assert!(title.ends_with("large"), "{title:?}");
+}
+
+#[test]
+fn human_renderer_spans_tier_headings_to_the_width() {
+    let report = five_finding_report();
+
+    for width in [80, 100] {
+        let rendered = cargo_zempic::report::human::render(&report, false, width);
+        let headings: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("── TIER "))
+            .collect();
+
+        assert_eq!(
+            headings.len(),
+            3,
+            "one heading per non-empty tier: {rendered}"
+        );
+
+        for heading in headings {
+            assert_eq!(heading.chars().count(), width, "{heading:?}");
+            assert!(
+                heading.ends_with("finding") || heading.ends_with("findings"),
+                "{heading:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn human_renderer_aligns_the_header_labels() {
+    let rendered = cargo_zempic::report::human::render(&five_finding_report(), false, 80);
+
+    for prefix in [
+        "  workspace:      ",
+        "  profile:        release",
+        "  optimizing for: size",
+        "  target:         ",
+    ] {
+        assert!(
+            rendered.lines().any(|line| line.starts_with(prefix)),
+            "the header must carry a line starting {prefix:?}: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn human_summary_colors_each_severity_count() {
+    use cargo_zempic::finding::{Magnitude, Severity, Tier};
+    use yansi::Paint;
+
+    let report = report_of(vec![
+        finding(
+            "profile/strip",
+            Tier::Foundational,
+            Severity::High,
+            Magnitude::Large,
+            None,
+        ),
+        finding(
+            "profile/debug-info",
+            Tier::Foundational,
+            Severity::High,
+            Magnitude::Moderate,
+            None,
+        ),
+        finding(
+            "profile/lto",
+            Tier::Compiler,
+            Severity::Low,
+            Magnitude::Small,
+            None,
+        ),
+    ]);
+
+    let rendered = cargo_zempic::report::human::render(&report, true, 80);
+
+    assert!(
+        rendered.contains(&"2 high".red().to_string()),
+        "{rendered:?}"
+    );
+    assert!(
+        rendered.contains(&"1 low".blue().to_string()),
+        "{rendered:?}"
     );
 }
 
@@ -1541,6 +1993,49 @@ fn human_summary_omits_the_fixable_line_when_nothing_is_fixable() {
 }
 
 #[test]
+fn renderers_omit_the_fixability_of_a_report_only_finding() {
+    use cargo_zempic::finding::{Fixability, Magnitude, Severity, Tier};
+
+    let mut report_only = finding(
+        "profile/missing-config",
+        Tier::Foundational,
+        Severity::Medium,
+        Magnitude::Moderate,
+        None,
+    );
+    report_only.fixability = Fixability::ReportOnly;
+
+    let mut automatable = finding(
+        "profile/strip",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Large,
+        None,
+    );
+    automatable.fixability = Fixability::Safe;
+
+    let report = report_of(vec![automatable, report_only]);
+    let human = cargo_zempic::report::human::render(&report, false, 1000);
+    let markdown = cargo_zempic::report::markdown::render(&report);
+    let json = cargo_zempic::report::json::render(&report).expect("the report renders");
+
+    assert!(human.contains("fix safe"), "{human}");
+    assert!(!human.contains("report-only"), "{human}");
+    assert!(
+        !human.contains(" · \n"),
+        "the cost row ends at `runtime`: {human}"
+    );
+
+    assert!(!markdown.contains("| Fix |"), "{markdown}");
+    assert!(!markdown.contains("report-only"), "{markdown}");
+    assert!(!markdown.contains("| safe |"), "{markdown}");
+
+    assert_eq!(json.matches("\"fixability\"").count(), 1, "{json}");
+    assert!(json.contains("\"fixability\": \"safe\""), "{json}");
+    assert!(!json.contains("report-only"), "{json}");
+}
+
+#[test]
 fn human_renderer_always_emits_the_magnitude_legend() {
     use cargo_zempic::finding::{Magnitude, Severity, Tier};
 
@@ -1561,25 +2056,46 @@ fn human_renderer_always_emits_the_magnitude_legend() {
     }
 }
 
-/// A report carrying five findings across three tiers, for the quiet tests.
+/// A report carrying five findings across three tiers: the first changes
+/// `profile.release.strip`, the second points into `Cargo.toml`, and the rest
+/// carry no location and no change.
 fn five_finding_report() -> cargo_zempic::report::Report {
-    use cargo_zempic::finding::{Magnitude, Severity, Tier};
+    use cargo_zempic::finding::{Change, Location, Magnitude, Severity, Tier};
+
+    let resolution = fixture_resolution();
+
+    let mut with_change = finding(
+        "profile/strip",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Large,
+        Some(Change {
+            current: "unset".to_owned(),
+            recommended: "\"symbols\"".to_owned(),
+        }),
+    );
+    with_change.location = Some(Location::new(span_in(
+        &resolution.workspace_root,
+        "Cargo.toml",
+        6,
+    )));
+
+    let mut with_location = finding(
+        "profile/debug-info",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Moderate,
+        None,
+    );
+    with_location.location = Some(Location::new(span_in(
+        &resolution.workspace_root,
+        "Cargo.toml",
+        6,
+    )));
 
     report_of(vec![
-        finding(
-            "profile/strip",
-            Tier::Foundational,
-            Severity::High,
-            Magnitude::Large,
-            None,
-        ),
-        finding(
-            "profile/debug-info",
-            Tier::Foundational,
-            Severity::High,
-            Magnitude::Moderate,
-            None,
-        ),
+        with_change,
+        with_location,
         finding(
             "profile/lto",
             Tier::Compiler,
@@ -1618,8 +2134,10 @@ fn quiet_renderer_emits_one_line_per_finding() {
         "deps/workspace-resolver",
     ] {
         assert!(
-            rendered.lines().any(|line| line.starts_with(rule)),
-            "`{rule}` must start a line: {rendered}"
+            rendered
+                .lines()
+                .any(|line| line.starts_with("● ") && line.contains(&format!("  {rule}"))),
+            "`{rule}` must sit on a line of its own after the bullet: {rendered}"
         );
     }
 
@@ -1627,6 +2145,179 @@ fn quiet_renderer_emits_one_line_per_finding() {
     assert!(!rendered.contains("TIER 1"), "{rendered}");
     assert!(!rendered.contains("Tradeoff:"), "{rendered}");
     assert!(!rendered.contains("effort:"), "{rendered}");
+}
+
+/// A report over `five_finding_report`'s findings in which `profile/strip` and
+/// `deps/workspace-resolver` both carry a change, so the change column has more
+/// than one carrier.
+fn five_finding_report_with_changes() -> cargo_zempic::report::Report {
+    use cargo_zempic::finding::Change;
+
+    let change = Change {
+        current: "unset".to_owned(),
+        recommended: "\"symbols\"".to_owned(),
+    };
+
+    let mut findings = five_finding_report().findings;
+
+    for finding in &mut findings {
+        let rule = finding.rule.to_string();
+
+        if rule == "profile/strip" || rule == "deps/workspace-resolver" {
+            finding.change = Some(change.clone());
+        }
+    }
+
+    report_of(findings)
+}
+
+/// A quiet line with its change column cut away, so the columns before it can
+/// be compared whatever path the fixture resolution reports.
+fn strip_change(line: &str) -> String {
+    let needles = ["unset -> ", "none -> "];
+
+    for needle in needles {
+        if let Some(found) = line.find(needle) {
+            return line[..found].to_owned();
+        }
+    }
+
+    line.to_owned()
+}
+
+/// The character offset at which `needle` starts in `line`, if it occurs once.
+fn char_offset(line: &str, needle: &str) -> Option<usize> {
+    let found = line.find(needle)?;
+
+    if line.matches(needle).count() != 1 {
+        return None;
+    }
+
+    Some(line[..found].chars().count())
+}
+
+#[test]
+fn quiet_renderer_aligns_its_columns() {
+    let report = five_finding_report_with_changes();
+
+    let rendered = cargo_zempic::report::human::render_quiet(&report, false, 80);
+
+    let finding_lines: Vec<&str> = rendered
+        .lines()
+        .filter(|line| line.starts_with("● "))
+        .collect();
+
+    assert_eq!(finding_lines.len(), 5, "{rendered}");
+
+    for line in &finding_lines {
+        assert!(!line.ends_with(' '), "trailing space in {line:?}");
+    }
+
+    // The location between the rule and the change is as wide as the path it
+    // names, so the change column is compared on the columns before it.
+    let without_changes: Vec<String> = finding_lines
+        .iter()
+        .map(|line| strip_change(line))
+        .collect();
+
+    let rules = [
+        "profile/strip",
+        "profile/debug-info",
+        "profile/lto",
+        "deps/duplicate-versions",
+        "deps/workspace-resolver",
+    ];
+
+    let rule_columns: Vec<usize> = without_changes
+        .iter()
+        .map(|line| {
+            let offsets: Vec<usize> = rules
+                .iter()
+                .filter_map(|rule| char_offset(line, rule))
+                .collect();
+
+            assert_eq!(offsets.len(), 1, "exactly one rule on {line:?}");
+
+            offsets[0]
+        })
+        .collect();
+
+    assert!(
+        rule_columns.iter().all(|column| *column == rule_columns[0]),
+        "rule identifiers must start in one column: {rule_columns:?} in {rendered}"
+    );
+
+    let magnitudes = ["large", "moderate", "small", "none"];
+
+    let magnitude_columns: Vec<usize> = without_changes
+        .iter()
+        .map(|line| {
+            let offsets: Vec<usize> = magnitudes
+                .iter()
+                .filter_map(|magnitude| char_offset(line, magnitude))
+                .collect();
+
+            assert_eq!(offsets.len(), 1, "exactly one magnitude on {line:?}");
+
+            offsets[0]
+        })
+        .collect();
+
+    assert!(
+        magnitude_columns
+            .iter()
+            .all(|column| *column == magnitude_columns[0]),
+        "magnitudes must start in one column: {magnitude_columns:?} in {rendered}"
+    );
+
+    // The workspace root is an absolute path, so a location column is as wide as
+    // the path it names and the change follows it. Both change-carrying lines
+    // must still place the change at the same distance past everything before
+    // it: a two-space gap after the rule or after the location column.
+    let change_columns: Vec<usize> = finding_lines
+        .iter()
+        .filter(|line| line.contains("unset -> "))
+        .map(|line| line.split("unset -> ").next().unwrap_or_default().len())
+        .collect();
+
+    assert_eq!(change_columns.len(), 2, "{rendered}");
+    assert!(
+        change_columns.iter().all(|column| *column >= 22),
+        "the change follows the rule and its location: {change_columns:?} in {rendered}"
+    );
+
+    let strip_line = finding_lines
+        .iter()
+        .copied()
+        .find(|line| line.contains("profile/strip"))
+        .expect("the strip finding has a line");
+    let resolver_line = finding_lines
+        .iter()
+        .copied()
+        .find(|line| line.contains("deps/workspace-resolver"))
+        .expect("the resolver finding has a line");
+    let strip_head = strip_line.split("unset -> ").next().unwrap_or_default();
+    let resolver_head = resolver_line.split("unset -> ").next().unwrap_or_default();
+
+    assert!(
+        strip_head.ends_with("Cargo.toml:6  ") && resolver_head.ends_with("  "),
+        "the change follows two spaces: {strip_head:?} / {resolver_head:?}"
+    );
+    assert!(
+        strip_line.starts_with("● HIGH    large       profile/strip"),
+        "{strip_line:?}"
+    );
+}
+
+#[test]
+fn quiet_renderer_color_never_changes_the_layout() {
+    let report = five_finding_report_with_changes();
+
+    let colored = cargo_zempic::report::human::render_quiet(&report, true, 80);
+    let plain = cargo_zempic::report::human::render_quiet(&report, false, 80);
+
+    assert!(colored.contains('\u{1b}'), "the colored form must color");
+    assert_eq!(strip_ansi(&colored), plain);
 }
 
 #[test]

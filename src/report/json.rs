@@ -93,7 +93,10 @@ struct FindingObject {
     confidence: &'static str,
     effort: &'static str,
     runtime_cost: &'static str,
-    fixability: &'static str,
+    /// Absent for a finding no automated fix exists for, whose fixability a
+    /// report does not state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fixability: Option<&'static str>,
     change: Option<ChangeObject>,
     location: Option<LocationObject>,
     title: String,
@@ -117,7 +120,7 @@ impl FindingObject {
             confidence: finding.confidence.as_str(),
             effort: finding.effort.as_str(),
             runtime_cost: finding.runtime_cost.as_str(),
-            fixability: finding.fixability.as_str(),
+            fixability: finding.fixability.reported(),
             change: finding.change.as_ref().map(ChangeObject::from_change),
             location: finding
                 .location

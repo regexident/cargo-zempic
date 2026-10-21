@@ -82,9 +82,9 @@ fn render_tiers(report: &Report) -> String {
         ));
 
         output.push_str(
-            "| Rule | Severity | Magnitude | Change | Location | Effort | Runtime cost | Fix | Detail | Tradeoff |\n",
+            "| Rule | Severity | Magnitude | Change | Location | Effort | Runtime cost | Detail | Tradeoff |\n",
         );
-        output.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
+        output.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
 
         for finding in findings {
             output.push_str(&render_row(finding, &report.resolution));
@@ -114,7 +114,7 @@ fn render_row(finding: &Finding, resolution: &Resolution) -> String {
         });
 
     format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
         cell(&format!("`{}`", finding.rule)),
         cell(finding.severity.as_str()),
         cell(finding.magnitude.as_str()),
@@ -122,7 +122,6 @@ fn render_row(finding: &Finding, resolution: &Resolution) -> String {
         cell(&location),
         cell(finding.effort.as_str()),
         cell(finding.runtime_cost.as_str()),
-        cell(finding.fixability.as_str()),
         cell(&detail_with_advice(finding)),
         cell(&finding.tradeoff),
     )

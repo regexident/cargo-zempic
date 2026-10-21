@@ -3,20 +3,22 @@ source: tests/render.rs
 expression: document
 ---
 cargo-zempic 0.0.1
-    workspace: [WORKSPACE_ROOT]  (1 members, 1 selected)
-      profile: release  (inherits: none)
-optimizing for: size
-       target: aarch64-apple-darwin
+  workspace:      [WORKSPACE_ROOT]  (1 members, 1 selected)
+  profile:        release  (inherits: none)
+  optimizing for: size
+  target:         aarch64-apple-darwin
 
-TIER 1  FOUNDATIONAL                                                   1 finding
+── TIER 1 · FOUNDATIONAL ───────────────────────────────────────────── 1 finding
 
-  HIGH   none   workspace/ignored-member-profile member/Cargo.toml
-        effort: trivial   runtime cost: none   fix: safe
-        Cargo honors a `[profile.*]` table only in the workspace root manifest,
-        so this member's table has no effect. Moving the settings to the root
-        makes them take effect.
-        Tradeoff: The table is silently inert, so removing it changes nothing about the
-        artifact.
+  ╭ HIGH  workspace/ignored-member-profile                                  none
+  │ package   member
+  │ at        member/Cargo.toml:10  profile
+  │ cost      effort trivial · runtime none · fix safe
+  │ why       Cargo honors a `[profile.*]` table only in the workspace root
+  │           manifest, so this member's table has no effect. Moving the
+  │           settings to the root makes them take effect.
+  │ tradeoff  The table is silently inert, so removing it changes nothing about
+  ╰           the artifact.
 
 SUMMARY
   1 finding: 1 high.  By magnitude: 1 none.

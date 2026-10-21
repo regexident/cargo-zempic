@@ -44,7 +44,6 @@ expression: document
       "confidence": "high",
       "effort": "trivial",
       "runtime_cost": "none",
-      "fixability": "report-only",
       "change": null,
       "location": null,
       "title": "The profile sets nothing explicitly",

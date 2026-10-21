@@ -3,18 +3,20 @@ source: tests/render.rs
 expression: document
 ---
 cargo-zempic 0.0.1
-    workspace: [WORKSPACE_ROOT]  (1 members, 1 selected)
-      profile: release  (inherits: none)
-optimizing for: size
-       target: aarch64-apple-darwin
+  workspace:      [WORKSPACE_ROOT]  (1 members, 1 selected)
+  profile:        release  (inherits: none)
+  optimizing for: size
+  target:         aarch64-apple-darwin
 
-TIER 2  COMPILER                                                       1 finding
+── TIER 2 · COMPILER ───────────────────────────────────────────────── 1 finding
 
-  MEDIUM moderate profile/lto                      "thin" -> "fat"
-        effort: trivial   runtime cost: none   fix: consequential
-        Optimizing across crate boundaries removes code a per-crate build must
-        keep.
-        Tradeoff: Link time rises substantially.
+  ╭ MEDIUM  profile/lto                                                 moderate
+  │ change    "thin" -> "fat"
+  │ at        Cargo.toml:12  profile.release.lto
+  │ cost      effort trivial · runtime none · fix consequential
+  │ why       Optimizing across crate boundaries removes code a per-crate build
+  │           must keep.
+  ╰ tradeoff  Link time rises substantially.
 
 SUMMARY
   1 finding: 1 medium.  By magnitude: 1 moderate.

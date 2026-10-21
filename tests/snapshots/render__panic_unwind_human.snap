@@ -3,20 +3,22 @@ source: tests/render.rs
 expression: document
 ---
 cargo-zempic 0.0.1
-    workspace: [WORKSPACE_ROOT]  (1 members, 1 selected)
-      profile: release  (inherits: none)
-optimizing for: size
-       target: aarch64-apple-darwin
+  workspace:      [WORKSPACE_ROOT]  (1 members, 1 selected)
+  profile:        release  (inherits: none)
+  optimizing for: size
+  target:         aarch64-apple-darwin
 
-TIER 3  BEHAVIORAL                                                     1 finding
+── TIER 3 · BEHAVIORAL ─────────────────────────────────────────────── 1 finding
 
-  LOW    small  profile/panic-abort              "unwind" -> "abort"
-        effort: trivial   runtime cost: none   fix: consequential
-        Unwinding carries the machinery that walks the stack and runs
-        destructors. Aborting on panic lets the compiler drop it.
-        Tradeoff: Aborting loses unwinding: a `catch_unwind` in the workspace or any
-        dependency will no longer recover from a panic. The setting applies
-        workspace-wide, because `panic` cannot be set per package.
+  ╭ LOW  profile/panic-abort                                               small
+  │ change    "unwind" -> "abort"
+  │ at        Cargo.toml:14  profile.release.panic
+  │ cost      effort trivial · runtime none · fix consequential
+  │ why       Unwinding carries the machinery that walks the stack and runs
+  │           destructors. Aborting on panic lets the compiler drop it.
+  │ tradeoff  Aborting loses unwinding: a `catch_unwind` in the workspace or any
+  │           dependency will no longer recover from a panic. The setting
+  ╰           applies workspace-wide, because `panic` cannot be set per package.
 
 SUMMARY
   1 finding: 1 low.  By magnitude: 1 small.

@@ -3,34 +3,39 @@ source: tests/render.rs
 expression: document
 ---
 cargo-zempic 0.0.1
-    workspace: [WORKSPACE_ROOT]  (1 members, 1 selected)
-      profile: release  (inherits: none)
-optimizing for: size
-       target: x86_64-unknown-linux-gnu
+  workspace:      [WORKSPACE_ROOT]  (1 members, 1 selected)
+  profile:        release  (inherits: none)
+  optimizing for: size
+  target:         x86_64-unknown-linux-gnu
 
-TIER 2  COMPILER                                                      2 findings
+── TIER 2 · COMPILER ──────────────────────────────────────────────── 2 findings
 
-  HIGH   none   config/link-dead-code            .cargo/config.toml
-        effort: trivial   runtime cost: none   fix: safe
-        `build.rustflags` in
-        `[WORKSPACE_ROOT]/.cargo/config.toml`
-        sets `-C link-dead-code`, which keeps symbols the linker would otherwise
-        discard.
-        Tradeoff: The flag increases size; rarely intended outside coverage runs. Like any
-        rustflags change, removing it invalidates the whole build cache, costing
-        a full rebuild.
+  ╭ HIGH  config/link-dead-code                                             none
+  │ package   link-dead-code
+  │ at        .cargo/config.toml:2  build.rustflags
+  │ cost      effort trivial · runtime none · fix safe
+  │ why       `build.rustflags` in
+  │           `[WORKSPACE_ROOT]/.cargo/config.toml`
+  │           sets `-C link-dead-code`, which keeps symbols the linker would
+  │           otherwise discard.
+  │ tradeoff  The flag increases size; rarely intended outside coverage runs.
+  │           Like any rustflags change, removing it invalidates the whole build
+  ╰           cache, costing a full rebuild.
 
-  MEDIUM moderate config/link-gc-sections          unset -> -C link-arg=-Wl,--gc-sections
-        effort: trivial   runtime cost: none   fix: consequential
-        `build.rustflags` in
-        `[WORKSPACE_ROOT]/.cargo/config.toml`
-        sets `-C link-dead-code`, which suppresses rustc's own
-        section-garbage-collection default. `config/link-dead-code` reports the
-        flag itself; this finding reports the linker consequence and the flag
-        that restores the behavior.
-        Tradeoff: Platform-specific: `--gc-sections` on ELF, `-dead_strip` on Mach-O. Like
-        any rustflags change, adding it invalidates the whole build cache,
-        costing a full rebuild.
+  ╭ MEDIUM  config/link-gc-sections                                     moderate
+  │ package   link-dead-code
+  │ change    unset -> -C link-arg=-Wl,--gc-sections
+  │ at        .cargo/config.toml:2  build.rustflags
+  │ cost      effort trivial · runtime none · fix consequential
+  │ why       `build.rustflags` in
+  │           `[WORKSPACE_ROOT]/.cargo/config.toml`
+  │           sets `-C link-dead-code`, which suppresses rustc's own
+  │           section-garbage-collection default. `config/link-dead-code`
+  │           reports the flag itself; this finding reports the linker
+  │           consequence and the flag that restores the behavior.
+  │ tradeoff  Platform-specific: `--gc-sections` on ELF, `-dead_strip` on
+  │           Mach-O. Like any rustflags change, adding it invalidates the whole
+  ╰           build cache, costing a full rebuild.
 
 SUMMARY
   2 findings: 1 high, 1 medium.  By magnitude: 1 moderate, 1 none.

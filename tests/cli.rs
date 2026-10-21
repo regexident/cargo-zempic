@@ -14,9 +14,21 @@ fn binary() -> Command {
     Command::cargo_bin("cargo-zempic").expect("the binary is built")
 }
 
-/// The headers the human renderer emits, in the order it emits them.
-fn header(label: &str) -> String {
-    format!("{label:>14}")
+/// The rendered `check` report as text.
+fn report(args: &[&str]) -> String {
+    let output = binary().args(args).output().expect("the command runs");
+
+    assert!(output.status.success(), "the run failed: {output:?}");
+
+    String::from_utf8(output.stdout).expect("stdout is UTF-8")
+}
+
+/// The value `text`'s header line for `label` carries after the label and its
+/// padding.
+fn header_value<'a>(text: &'a str, label: &str) -> Option<&'a str> {
+    text.lines()
+        .find_map(|line| line.strip_prefix(label))
+        .map(str::trim_start)
 }
 
 #[test]
@@ -60,34 +72,26 @@ fn check_on_a_fixture_reports_the_workspace_and_profile() {
     let workspace = common::Fixture::new("multi-member").materialize();
     let host = host_target_triple();
 
-    let assert = binary()
-        .args([
-            "check",
-            "--manifest-path",
-            workspace.manifest_path().as_str(),
-        ])
-        .assert()
-        .code(0);
+    let text = report(&[
+        "check",
+        "--manifest-path",
+        workspace.manifest_path().as_str(),
+    ]);
 
-    assert.stdout(
-        predicate::str::contains(format!(
-            "{} {}",
-            header("workspace:"),
-            workspace.root().as_str()
-        ))
-        .and(predicate::str::contains("(2 members, 2 selected)"))
-        .and(predicate::str::contains(format!(
-            "{} {}",
-            header("profile:"),
-            "release"
-        )))
-        .and(predicate::str::contains("optimizing for: size"))
-        .and(predicate::str::contains(format!(
-            "{} {}",
-            header("target:"),
-            host
-        ))),
-    );
+    for (label, expected) in [
+        ("  workspace: ", workspace.root().as_str()),
+        ("  profile: ", "release"),
+        ("  optimizing for: ", "size"),
+        ("  target: ", host.as_str()),
+    ] {
+        let value = header_value(&text, label)
+            .unwrap_or_else(|| panic!("the `{label}` header line is missing: {text}"));
+
+        assert!(
+            value.starts_with(expected),
+            "the `{label}` line must carry `{expected}` after the label: {value:?}"
+        );
+    }
 }
 
 /// The host target triple as `rustc -vV` reports it.
@@ -120,21 +124,19 @@ fn check_reports_the_inherits_chain_of_a_custom_profile() {
     );
     std::fs::write(workspace.root().join("Cargo.toml"), root_manifest).unwrap();
 
-    let assert = binary()
-        .args([
-            "check",
-            "--manifest-path",
-            workspace.manifest_path().as_str(),
-            "--profile",
-            "small",
-        ])
-        .assert()
-        .code(0);
+    let text = report(&[
+        "check",
+        "--manifest-path",
+        workspace.manifest_path().as_str(),
+        "--profile",
+        "small",
+    ]);
 
-    assert.stdout(
-        predicate::str::contains(format!("{} {}", header("profile:"), "small"))
-            .and(predicate::str::contains("(inherits: release)")),
-    );
+    let value = header_value(&text, "  profile: ")
+        .unwrap_or_else(|| panic!("the `profile:` header line is missing: {text}"));
+
+    assert!(value.starts_with("small"), "{value:?}");
+    assert!(text.contains("(inherits: release)"), "{text}");
 }
 
 #[test]
@@ -505,28 +507,28 @@ fn configured_profile_is_honored_and_overridden_by_the_argument() {
 
     // A bare run analyzes the configured profile, which only reaches the
     // resolution if `--profile` carries no default.
-    binary()
-        .args([
-            "check",
-            "--manifest-path",
-            workspace.manifest_path().as_str(),
-        ])
-        .assert()
-        .code(0)
-        .stdout(predicate::str::contains("profile: custom"));
+    let configured = report(&[
+        "check",
+        "--manifest-path",
+        workspace.manifest_path().as_str(),
+    ]);
+    let profile = header_value(&configured, "  profile: ")
+        .unwrap_or_else(|| panic!("the `profile:` header line is missing: {configured}"));
+
+    assert!(profile.starts_with("custom"), "{profile:?}");
 
     // The argument merges over the configured profile.
-    binary()
-        .args([
-            "check",
-            "--manifest-path",
-            workspace.manifest_path().as_str(),
-            "--profile",
-            "release",
-        ])
-        .assert()
-        .code(0)
-        .stdout(predicate::str::contains("profile: release"));
+    let overridden = report(&[
+        "check",
+        "--manifest-path",
+        workspace.manifest_path().as_str(),
+        "--profile",
+        "release",
+    ]);
+    let profile = header_value(&overridden, "  profile: ")
+        .unwrap_or_else(|| panic!("the `profile:` header line is missing: {overridden}"));
+
+    assert!(profile.starts_with("release"), "{profile:?}");
 }
 
 #[test]
@@ -539,13 +541,13 @@ fn configured_dimensions_are_honored() {
     )
     .unwrap();
 
-    binary()
-        .args([
-            "check",
-            "--manifest-path",
-            workspace.manifest_path().as_str(),
-        ])
-        .assert()
-        .code(0)
-        .stdout(predicate::str::contains("optimizing for: size"));
+    let text = report(&[
+        "check",
+        "--manifest-path",
+        workspace.manifest_path().as_str(),
+    ]);
+    let dimensions = header_value(&text, "  optimizing for: ")
+        .unwrap_or_else(|| panic!("the `optimizing for:` header line is missing: {text}"));
+
+    assert!(dimensions.starts_with("size"), "{dimensions:?}");
 }

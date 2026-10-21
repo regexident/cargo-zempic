@@ -3,19 +3,21 @@ source: tests/render.rs
 expression: document
 ---
 cargo-zempic 0.0.1
-    workspace: [WORKSPACE_ROOT]  (1 members, 1 selected)
-      profile: release  (inherits: none)
-optimizing for: size
-       target: aarch64-apple-darwin
+  workspace:      [WORKSPACE_ROOT]  (1 members, 1 selected)
+  profile:        release  (inherits: none)
+  optimizing for: size
+  target:         aarch64-apple-darwin
 
-TIER 3  BEHAVIORAL                                                     1 finding
+── TIER 3 · BEHAVIORAL ─────────────────────────────────────────────── 1 finding
 
-  MEDIUM small  profile/debug-assertions         true -> false
-        effort: trivial   runtime cost: none   fix: safe
-        Debug assertions and internal consistency checks are compiled into the
-        shipped artifact.
-        Tradeoff: The removed checks catch bugs; an invariant they guard goes unnoticed in
-        the release build.
+  ╭ MEDIUM  profile/debug-assertions                                       small
+  │ change    true -> false
+  │ at        Cargo.toml:18  profile.release.debug-assertions
+  │ cost      effort trivial · runtime none · fix safe
+  │ why       Debug assertions and internal consistency checks are compiled into
+  │           the shipped artifact.
+  │ tradeoff  The removed checks catch bugs; an invariant they guard goes
+  ╰           unnoticed in the release build.
 
 SUMMARY
   1 finding: 1 medium.  By magnitude: 1 small.

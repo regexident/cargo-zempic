@@ -227,6 +227,18 @@ impl Fixability {
             Fixability::ReportOnly => false,
         }
     }
+
+    /// The lowercase name a report states for this fixability, if any.
+    ///
+    /// `None` for [`Fixability::ReportOnly`]: a report naming it would say only
+    /// that there is no automated fix, which the absence of a fixability states
+    /// already.
+    pub fn reported(&self) -> Option<&'static str> {
+        match self {
+            Fixability::ReportOnly => None,
+            Fixability::Safe | Fixability::Consequential => Some(self.as_str()),
+        }
+    }
 }
 
 /// The canonical identity of a rule: a path and an optional dimension.

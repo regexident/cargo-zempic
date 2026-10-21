@@ -3,10 +3,10 @@ source: tests/render.rs
 expression: document
 ---
 cargo-zempic 0.0.1
-    workspace: [WORKSPACE_ROOT]  (1 members, 1 selected)
-      profile: release  (inherits: none)
-optimizing for: size
-       target: aarch64-apple-darwin
+  workspace:      [WORKSPACE_ROOT]  (1 members, 1 selected)
+  profile:        release  (inherits: none)
+  optimizing for: size
+  target:         aarch64-apple-darwin
 No findings.
 
   Magnitude is an ordinal judgement, not a measurement. zempic does not build
