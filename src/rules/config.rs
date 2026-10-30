@@ -49,18 +49,19 @@ pub(crate) fn intended_span(workspace_root: &camino::Utf8Path, key: &str) -> Key
 /// Describe the rustflags source that won resolution, for use in a finding's
 /// detail text.
 ///
-/// Named by the environment variable for [`RustflagsSource::Environment`], or
-/// by the dotted key of every live chain entry for
-/// [`RustflagsSource::TargetTables`]. The other two variants never win
-/// alongside a non-empty `shadowed` list — `resolve` records nothing below
-/// `build.rustflags`, and `Unset` shadows nothing — so a caller holding a
-/// non-empty `shadowed` list never reaches them.
+/// Every source yields a description. [`RustflagsSource::Environment`] is
+/// named by its environment variable; [`RustflagsSource::TargetTables`] and
+/// [`RustflagsSource::BuildTable`] are named by the dotted key of every live
+/// chain entry. A source with no live entry to name, such as
+/// [`RustflagsSource::Unset`], falls back to "the cargo configuration".
 fn live_source_description(resolved: &crate::cargo_config::ResolvedRustflags) -> String {
     match &resolved.source {
         RustflagsSource::Environment { variable } => {
             format!("the `{}` environment variable", variable.as_str())
         }
-        RustflagsSource::TargetTables => {
+        RustflagsSource::TargetTables | RustflagsSource::BuildTable
+            if !resolved.live.is_empty() =>
+        {
             let keys: Vec<&str> = resolved
                 .live
                 .iter()
@@ -69,12 +70,8 @@ fn live_source_description(resolved: &crate::cargo_config::ResolvedRustflags) ->
 
             format!("`{}`", keys.join("`, `"))
         }
-        RustflagsSource::BuildTable | RustflagsSource::Unset => {
-            unreachable!(
-                "`resolve` records a shadowed entry only when the environment or a \
-                 target table wins, so a non-empty `shadowed` list never carries \
-                 either of these sources"
-            )
+        RustflagsSource::TargetTables | RustflagsSource::BuildTable | RustflagsSource::Unset => {
+            "the cargo configuration".to_owned()
         }
     }
 }
@@ -560,7 +557,7 @@ fn build(
 
 #[cfg(test)]
 mod tests {
-    use super::{dead_code_source, intended_span};
+    use super::{dead_code_source, intended_span, live_source_description};
     use crate::cargo_config::{
         EnvironmentVariable, ResolvedRustflags, RustflagsEntry, RustflagsSource,
     };
@@ -673,5 +670,31 @@ mod tests {
             assert_eq!(source.fixability, Fixability::ReportOnly);
             assert_eq!(source.description, "the cargo configuration");
         }
+    }
+
+    #[test]
+    fn live_source_description_names_build_table_keys() {
+        let resolved = resolved(
+            RustflagsSource::BuildTable,
+            vec![entry(
+                "/w/.cargo/config.toml",
+                "build.rustflags",
+                &["-C", "opt-level=z"],
+            )],
+        );
+
+        assert_eq!(live_source_description(&resolved), "`build.rustflags`");
+    }
+
+    #[test]
+    fn live_source_description_falls_back_without_live_entries() {
+        let unset = resolved(RustflagsSource::Unset, Vec::new());
+        let target_tables = resolved(RustflagsSource::TargetTables, Vec::new());
+
+        assert_eq!(live_source_description(&unset), "the cargo configuration");
+        assert_eq!(
+            live_source_description(&target_tables),
+            "the cargo configuration"
+        );
     }
 }
