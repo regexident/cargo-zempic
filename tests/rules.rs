@@ -2596,6 +2596,28 @@ fn markdown_renderer_emits_a_table_per_non_empty_tier() {
 }
 
 #[test]
+fn markdown_renderer_states_each_findings_title() {
+    use cargo_zempic::finding::{Magnitude, Severity, Tier};
+
+    let mut titled = finding(
+        "profile/strip",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Large,
+        None,
+    );
+    titled.title = "symbols are kept".to_owned();
+
+    let rendered = cargo_zempic::report::markdown::render(&report_of(vec![titled]));
+
+    assert!(rendered.contains("| Finding |"), "{rendered}");
+    assert!(
+        rendered.contains("| `profile/strip` | symbols are kept | high |"),
+        "{rendered}"
+    );
+}
+
+#[test]
 fn markdown_renderer_escapes_pipes_and_newlines_in_cells() {
     let report = markdown_report();
 
