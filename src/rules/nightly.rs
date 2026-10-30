@@ -69,7 +69,7 @@ impl Rule for NightlyLocationDetailRule {
                 continue;
             }
 
-            let setting = unstable_flag(&resolved.flags, "location-detail");
+            let setting = resolved.unstable_flag("location-detail");
 
             // The option is configured only in its valued `none` spelling: a
             // bare `-Z location-detail` selects rustc's own default, which keeps
@@ -164,7 +164,7 @@ impl Rule for NightlyPanicImmediateAbortRule {
             // The option is a switch with no value, so any occurrence counts as
             // configured however it is spelled; its value, when one is
             // attached, is not a state this rule distinguishes.
-            if unstable_flag(&resolved.flags, "panic-immediate-abort").is_some() {
+            if resolved.unstable_flag("panic-immediate-abort").is_some() {
                 continue;
             }
 

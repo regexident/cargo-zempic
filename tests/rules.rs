@@ -3627,6 +3627,30 @@ fn link_dead_code_fires_on_the_live_source() {
 }
 
 #[test]
+fn link_dead_code_survives_a_codegen_switch_split_across_tables() {
+    let layouts = [
+        "[target.x86_64-unknown-linux-gnu]\nrustflags = [\"-C\"]\n\n[target.'cfg(unix)']\nrustflags = [\"link-dead-code\"]\n",
+        "[target.'cfg(unix)']\nrustflags = [\"-C\"]\n\n[target.x86_64-unknown-linux-gnu]\nrustflags = [\"link-dead-code\"]\n",
+    ];
+
+    for text in layouts {
+        let workspace = common::Fixture::new("link-dead-code").materialize();
+        let configuration_path = workspace.root().join(".cargo").join("config.toml");
+        std::fs::write(&configuration_path, text).expect("the configuration is writable");
+
+        let mut config = analyze_config(&workspace, &[]);
+        config.target = Some("x86_64-unknown-linux-gnu".to_owned());
+
+        let report = cargo_zempic::analyze(&config).expect("the analysis succeeds");
+
+        assert!(
+            !finding_rules(&report.findings).contains(&"config/link-dead-code".to_owned()),
+            "a `-C` ending one array pairs with nothing in the next: {text}"
+        );
+    }
+}
+
+#[test]
 fn link_dead_code_is_report_only_from_the_environment() {
     use cargo_zempic::cargo_config::CargoEnvironment;
     use cargo_zempic::finding::Fixability;

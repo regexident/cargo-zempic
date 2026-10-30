@@ -10,7 +10,7 @@
 //! configuration files' text, so a finding here is about what cargo applies
 //! rather than about what a file happens to contain.
 
-use crate::cargo_config::{RustflagsEntry, RustflagsSource};
+use crate::cargo_config::RustflagsSource;
 use crate::finding::{
     Change, Confidence, Effort, Finding, Fixability, Location, RuleId, RuntimeCost,
 };
@@ -159,25 +159,67 @@ pub struct LinkDeadCodeRule;
 /// The instance registered for [`LinkDeadCodeRule`].
 pub const LINK_DEAD_CODE_RULE: LinkDeadCodeRule = LinkDeadCodeRule;
 
-/// The live entry whose own flags carry `link-dead-code`, among `live`.
+/// Where a finding about `-C link-dead-code` points and how it names its
+/// source.
+struct DeadCodeSource {
+    /// The key a remedy would edit.
+    location: KeySpan,
+    /// Whether the remedy can be written to a file the project owns.
+    fixability: Fixability,
+    /// The source as it reads inside a finding's detail text.
+    description: String,
+}
+
+/// Locate the source of `-C link-dead-code` in `resolved`.
 ///
 /// `resolved.flags` is the concatenation of every live entry and does not say
-/// which one contributed the flag, so the search re-checks each entry's own
-/// flags individually to find the key a finding should point at.
-///
-/// # Panics
-///
-/// Panics when no entry in `live` carries the flag. A caller holding a
-/// `TargetTables` or `BuildTable` source whose concatenated `flags` enables
-/// `link-dead-code` always has at least one such entry, because the
-/// concatenation is built only from `live`'s own entries.
-fn live_entry_carrying_link_dead_code(live: &[RustflagsEntry]) -> &RustflagsEntry {
-    live.iter()
-        .find(|entry| crate::cargo_config::flag_enabled(&entry.flags, "link-dead-code"))
-        .expect(
-            "a concatenation carrying the flag is built only from `live`'s own entries, \
-             so one of them carries it",
-        )
+/// which one contributed the flag, so each live entry's own flags are checked
+/// individually. A remedy can only be written to a file the project owns, so
+/// an entry in a chain file outside `workspace_root` is reported with
+/// [`Fixability::ReportOnly`] and any other with `fixability`. When no live
+/// entry carries the flag, the environment supplied it or the resolution is
+/// otherwise unattributable, and the result points at the file a remedy would
+/// create.
+fn dead_code_source(
+    resolved: &crate::cargo_config::ResolvedRustflags,
+    workspace_root: &camino::Utf8Path,
+    fixability: Fixability,
+) -> DeadCodeSource {
+    if let RustflagsSource::Environment { variable } = &resolved.source {
+        return DeadCodeSource {
+            location: intended_span(workspace_root, "build.rustflags"),
+            fixability: Fixability::ReportOnly,
+            description: format!("the `{}` environment variable", variable.as_str()),
+        };
+    }
+
+    let carrying_entry = match resolved.source {
+        RustflagsSource::TargetTables | RustflagsSource::BuildTable => resolved
+            .live
+            .iter()
+            .find(|entry| crate::cargo_config::flag_enabled(&entry.flags, "link-dead-code")),
+        RustflagsSource::Environment { .. } | RustflagsSource::Unset => None,
+    };
+
+    let Some(entry) = carrying_entry else {
+        return DeadCodeSource {
+            location: intended_span(workspace_root, "build.rustflags"),
+            fixability: Fixability::ReportOnly,
+            description: "the cargo configuration".to_owned(),
+        };
+    };
+
+    let fixability = if entry.key.file.starts_with(workspace_root) {
+        fixability
+    } else {
+        Fixability::ReportOnly
+    };
+
+    DeadCodeSource {
+        location: entry.key.clone(),
+        fixability,
+        description: format!("`{}` in `{}`", entry.key.key, entry.key.file),
+    }
 }
 
 impl Rule for LinkDeadCodeRule {
@@ -190,7 +232,7 @@ impl Rule for LinkDeadCodeRule {
                 continue;
             }
 
-            if !crate::cargo_config::flag_enabled(&resolved.flags, "link-dead-code") {
+            if !resolved.flag_enabled("link-dead-code") {
                 continue;
             }
 
@@ -204,40 +246,15 @@ impl Rule for LinkDeadCodeRule {
                 Confidence::High
             };
 
-            let (location, fixability, source_description) = match &resolved.source {
-                RustflagsSource::Environment { variable } => (
-                    intended_span(&context.resolution.workspace_root, "build.rustflags"),
-                    Fixability::ReportOnly,
-                    format!("the `{}` environment variable", variable.as_str()),
-                ),
-                RustflagsSource::TargetTables | RustflagsSource::BuildTable => {
-                    let entry = live_entry_carrying_link_dead_code(&resolved.live);
-
-                    // A remedy can only be written to a file the project
-                    // owns; a chain file above the workspace root belongs to
-                    // the user's machine, not to the project under analysis.
-                    let outside_workspace = !entry
-                        .key
-                        .file
-                        .starts_with(&context.resolution.workspace_root);
-
-                    let fixability = if outside_workspace {
-                        Fixability::ReportOnly
-                    } else {
-                        metadata.fixability
-                    };
-
-                    (
-                        entry.key.clone(),
-                        fixability,
-                        format!("`{}` in `{}`", entry.key.key, entry.key.file),
-                    )
-                }
-                RustflagsSource::Unset => unreachable!(
-                    "`Unset` carries no flags, so `flag_enabled` on it is always false \
-                     and this arm is never reached"
-                ),
-            };
+            let DeadCodeSource {
+                location,
+                fixability,
+                description: source_description,
+            } = dead_code_source(
+                resolved,
+                &context.resolution.workspace_root,
+                metadata.fixability,
+            );
 
             let downgrade_note = if fixability == Fixability::ReportOnly {
                 " This source lies outside the workspace, so the change is the user's to \
@@ -374,21 +391,18 @@ impl Rule for LinkGcSectionsRule {
                 continue;
             }
 
-            let explicit_flag_present = crate::cargo_config::link_arguments(&resolved.flags)
-                .iter()
-                .any(|argument| {
-                    let lowered = argument.to_ascii_lowercase();
-                    lowered.contains("--gc-sections")
-                        || lowered.contains("-dead_strip")
-                        || lowered.contains("/opt:ref")
-                });
+            let explicit_flag_present = resolved.link_arguments().iter().any(|argument| {
+                let lowered = argument.to_ascii_lowercase();
+                lowered.contains("--gc-sections")
+                    || lowered.contains("-dead_strip")
+                    || lowered.contains("/opt:ref")
+            });
 
             if explicit_flag_present {
                 continue;
             }
 
-            let dead_code_live =
-                crate::cargo_config::flag_enabled(&resolved.flags, "link-dead-code");
+            let dead_code_live = resolved.flag_enabled("link-dead-code");
             let family = linker_family(context.target_triple);
             let unclassified = family == LinkerFamily::Unknown;
 
@@ -447,20 +461,12 @@ impl Rule for LinkGcSectionsRule {
                     context.target_triple
                 )
             } else {
-                let live_description = match &resolved.source {
-                    RustflagsSource::Environment { variable } => {
-                        format!("the `{}` environment variable", variable.as_str())
-                    }
-                    RustflagsSource::TargetTables | RustflagsSource::BuildTable => {
-                        let entry = live_entry_carrying_link_dead_code(&resolved.live);
-
-                        format!("`{}` in `{}`", entry.key.key, entry.key.file)
-                    }
-                    RustflagsSource::Unset => unreachable!(
-                        "`Unset` carries no flags, so `flag_enabled` on it is always false \
-                         and this arm is never reached"
-                    ),
-                };
+                let live_description = dead_code_source(
+                    resolved,
+                    &context.resolution.workspace_root,
+                    metadata.fixability,
+                )
+                .description;
 
                 format!(
                     "{live_description} sets `-C link-dead-code`, which suppresses rustc's \
@@ -549,5 +555,123 @@ fn build(
         advice: None,
         tradeoff: tradeoff.to_owned(),
         references: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{dead_code_source, intended_span};
+    use crate::cargo_config::{
+        EnvironmentVariable, ResolvedRustflags, RustflagsEntry, RustflagsSource,
+    };
+    use crate::finding::Fixability;
+    use crate::manifest::KeySpan;
+    use camino::{Utf8Path, Utf8PathBuf};
+
+    /// A configuration entry declaring one flag list at `key`.
+    fn entry(file: &str, key: &str, flags: &[&str]) -> RustflagsEntry {
+        RustflagsEntry {
+            key: KeySpan {
+                file: Utf8PathBuf::from(file),
+                key: key.to_owned(),
+                line: 1,
+                column: 1,
+            },
+            flags: flags.iter().map(|flag| (*flag).to_owned()).collect(),
+        }
+    }
+
+    fn resolved(source: RustflagsSource, live: Vec<RustflagsEntry>) -> ResolvedRustflags {
+        ResolvedRustflags {
+            source,
+            flags: live
+                .iter()
+                .flat_map(|entry| entry.flags.iter().cloned())
+                .collect(),
+            live,
+            shadowed: Vec::new(),
+            cfg_tables_unevaluated: false,
+        }
+    }
+
+    #[test]
+    fn dead_code_source_names_the_carrying_entry() {
+        let resolved = resolved(
+            RustflagsSource::BuildTable,
+            vec![
+                entry(
+                    "/w/.cargo/config.toml",
+                    "target.'cfg(unix)'.rustflags",
+                    &["-C", "opt-level=z"],
+                ),
+                entry(
+                    "/w/.cargo/config.toml",
+                    "build.rustflags",
+                    &["-C", "link-dead-code"],
+                ),
+            ],
+        );
+
+        let inside = dead_code_source(&resolved, Utf8Path::new("/w"), Fixability::Safe);
+
+        assert_eq!(inside.location.key, "build.rustflags");
+        assert_eq!(inside.fixability, Fixability::Safe);
+        assert_eq!(
+            inside.description,
+            "`build.rustflags` in `/w/.cargo/config.toml`"
+        );
+
+        let outside = dead_code_source(&resolved, Utf8Path::new("/elsewhere"), Fixability::Safe);
+
+        assert_eq!(outside.fixability, Fixability::ReportOnly);
+    }
+
+    #[test]
+    fn dead_code_source_reports_the_environment_variable() {
+        let resolved = ResolvedRustflags {
+            source: RustflagsSource::Environment {
+                variable: EnvironmentVariable::Rustflags,
+            },
+            flags: vec!["-C".to_owned(), "link-dead-code".to_owned()],
+            live: Vec::new(),
+            shadowed: Vec::new(),
+            cfg_tables_unevaluated: false,
+        };
+
+        let source = dead_code_source(&resolved, Utf8Path::new("/w"), Fixability::Safe);
+
+        assert_eq!(
+            source.location,
+            intended_span(Utf8Path::new("/w"), "build.rustflags")
+        );
+        assert_eq!(source.fixability, Fixability::ReportOnly);
+        assert_eq!(source.description, "the `RUSTFLAGS` environment variable");
+    }
+
+    #[test]
+    fn dead_code_source_falls_back_without_a_carrying_entry() {
+        let unset = resolved(RustflagsSource::Unset, Vec::new());
+        let split = resolved(
+            RustflagsSource::TargetTables,
+            vec![
+                entry("/w/.cargo/config.toml", "target.x.rustflags", &["-C"]),
+                entry(
+                    "/w/.cargo/config.toml",
+                    "target.'cfg(unix)'.rustflags",
+                    &["link-dead-code"],
+                ),
+            ],
+        );
+
+        for resolved in [unset, split] {
+            let source = dead_code_source(&resolved, Utf8Path::new("/w"), Fixability::Safe);
+
+            assert_eq!(
+                source.location,
+                intended_span(Utf8Path::new("/w"), "build.rustflags")
+            );
+            assert_eq!(source.fixability, Fixability::ReportOnly);
+            assert_eq!(source.description, "the cargo configuration");
+        }
     }
 }
