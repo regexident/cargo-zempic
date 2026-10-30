@@ -420,7 +420,16 @@ pub struct RustflagsEntry {
 pub struct ResolvedRustflags {
     /// Which rank supplied [`flags`](Self::flags).
     pub source: RustflagsSource,
-    /// The rustflags cargo actually applies.
+    /// The rustflags cargo actually applies, as the concatenation of every
+    /// array it reads.
+    ///
+    /// Adjacent arrays share no token pairing in cargo, yet a flat scan of
+    /// this concatenation would pair a trailing `-C` with the first token of
+    /// the next array. Readers must therefore use
+    /// [`flag_enabled`](Self::flag_enabled),
+    /// [`unstable_flag`](Self::unstable_flag) and
+    /// [`link_arguments`](Self::link_arguments), which scan each array on its
+    /// own, rather than scanning this field.
     pub flags: Vec<String>,
     /// The entries contributing to [`flags`](Self::flags); empty when
     /// [`source`](Self::source) is [`RustflagsSource::Environment`] or
@@ -436,6 +445,56 @@ pub struct ResolvedRustflags {
     /// whether or not its predicate would actually match; a rule relying on
     /// a resolution carrying this flag must cap its confidence accordingly.
     pub cfg_tables_unevaluated: bool,
+}
+
+impl ResolvedRustflags {
+    /// The arrays cargo reads independently: the single environment array for
+    /// [`RustflagsSource::Environment`], each live entry's array in order for
+    /// the two chain-file ranks, and none for [`RustflagsSource::Unset`].
+    fn flag_arrays(&self) -> Vec<&[String]> {
+        match self.source {
+            RustflagsSource::Environment { .. } => vec![self.flags.as_slice()],
+            RustflagsSource::TargetTables | RustflagsSource::BuildTable => self
+                .live
+                .iter()
+                .map(|entry| entry.flags.as_slice())
+                .collect(),
+            RustflagsSource::Unset => Vec::new(),
+        }
+    }
+
+    /// Whether the rustc codegen flag `name` is enabled, reading each array on
+    /// its own.
+    ///
+    /// The first array naming `name` decides; a `-C` ending one array never
+    /// pairs with the first token of the next.
+    pub fn flag_enabled(&self, name: &str) -> bool {
+        self.flag_arrays()
+            .into_iter()
+            .find_map(|flags| codegen_flag_setting(flags, name))
+            .unwrap_or(false)
+    }
+
+    /// The `-Z` flag named `name` as it last appears, reading each array on
+    /// its own.
+    ///
+    /// The value comes from the last array that names `name` at all; see
+    /// [`unstable_flag`] for the per-array rules.
+    pub fn unstable_flag(&self, name: &str) -> Option<Option<String>> {
+        self.flag_arrays()
+            .into_iter()
+            .filter_map(|flags| unstable_flag(flags, name))
+            .next_back()
+    }
+
+    /// The values of every `-C link-arg`/`link-args` flag, reading each array
+    /// on its own and concatenating the results in array order.
+    pub fn link_arguments(&self) -> Vec<String> {
+        self.flag_arrays()
+            .into_iter()
+            .flat_map(link_arguments)
+            .collect()
+    }
 }
 
 /// One `rustflags` array found while collecting a single rank from the
@@ -683,13 +742,15 @@ fn codegen_flag_state(value: &str, name: &str) -> Option<bool> {
     }
 }
 
-/// Whether the rustc codegen flag `name` is enabled anywhere in `flags`,
-/// recognizing every form rustc and cargo accept: the two-element
+/// The state of the first occurrence in `flags` that names the rustc codegen
+/// flag `name`, or [`None`] when no occurrence names it.
+///
+/// Recognizes every form rustc and cargo accept: the two-element
 /// `-C`/`--codegen` forms, their one-element `-C<name>`/`--codegen=<name>`
 /// equivalents, and a `=yes`/`=y`/`=on`/`=true` or `=no`/`=n`/`=off`/`=false`
 /// suffix on the name in any of them. A bare flag with no suffix at all
 /// counts as enabled, matching cargo's own boolean-flag convention.
-pub fn flag_enabled(flags: &[String], name: &str) -> bool {
+fn codegen_flag_setting(flags: &[String], name: &str) -> Option<bool> {
     let mut index = 0;
 
     while index < flags.len() {
@@ -698,7 +759,7 @@ pub fn flag_enabled(flags: &[String], name: &str) -> bool {
         if current == "-C" || current == "--codegen" {
             if let Some(next) = flags.get(index + 1) {
                 if let Some(state) = codegen_flag_state(next, name) {
-                    return state;
+                    return Some(state);
                 }
             }
 
@@ -712,13 +773,22 @@ pub fn flag_enabled(flags: &[String], name: &str) -> bool {
             .and_then(|value| codegen_flag_state(value, name));
 
         if let Some(state) = matched {
-            return state;
+            return Some(state);
         }
 
         index += 1;
     }
 
-    false
+    None
+}
+
+/// Whether the rustc codegen flag `name` is enabled anywhere in `flags`.
+///
+/// `flags` must be a single `rustflags` array: a trailing `-C` pairs with no
+/// element of any other array. See [`codegen_flag_setting`]'s recognition
+/// rules, which this shares.
+pub fn flag_enabled(flags: &[String], name: &str) -> bool {
+    codegen_flag_setting(flags, name).unwrap_or(false)
 }
 
 /// The name and optional `=value` suffix of one `-Z` flag, split at the first
@@ -1430,5 +1500,67 @@ mod tests {
             &["-C".to_owned(), "link-dead-codex".to_owned()],
             name
         ));
+    }
+
+    fn resolve_text(text: &str) -> super::ResolvedRustflags {
+        use super::{CargoConfigDocument, resolve};
+
+        let path = Utf8Path::new("/probe/.cargo/config.toml");
+        let document = CargoConfigDocument::parse(path, text).unwrap();
+
+        resolve(
+            &[document],
+            &CargoEnvironment::default(),
+            "x86_64-unknown-linux-gnu",
+        )
+    }
+
+    #[test]
+    fn resolved_readers_do_not_pair_flags_across_arrays() {
+        let triple_first = resolve_text(
+            "[target.x86_64-unknown-linux-gnu]\nrustflags = [\"-C\"]\n\n[target.'cfg(unix)']\nrustflags = [\"link-dead-code\"]\n",
+        );
+        let cfg_first = resolve_text(
+            "[target.'cfg(unix)']\nrustflags = [\"-C\"]\n\n[target.x86_64-unknown-linux-gnu]\nrustflags = [\"link-dead-code\"]\n",
+        );
+        let unstable = resolve_text(
+            "[target.x86_64-unknown-linux-gnu]\nrustflags = [\"-Z\"]\n\n[target.'cfg(unix)']\nrustflags = [\"location-detail=none\"]\n",
+        );
+        let link = resolve_text(
+            "[target.x86_64-unknown-linux-gnu]\nrustflags = [\"-C\"]\n\n[target.'cfg(unix)']\nrustflags = [\"link-arg=-Wl,--gc-sections\"]\n",
+        );
+
+        assert!(!triple_first.flag_enabled("link-dead-code"));
+        assert!(!cfg_first.flag_enabled("link-dead-code"));
+        assert_eq!(unstable.unstable_flag("location-detail"), None);
+        assert!(link.link_arguments().is_empty());
+    }
+
+    #[test]
+    fn resolved_readers_scan_every_array() {
+        use super::{RustflagsSource, resolve};
+
+        let resolved = resolve_text(
+            "[target.x86_64-unknown-linux-gnu]\nrustflags = [\"-C\", \"target-cpu=native\"]\n\n[target.'cfg(unix)']\nrustflags = [\"-C\", \"link-dead-code\", \"-Z\", \"location-detail=none\", \"-C\", \"link-arg=/OPT:REF\"]\n",
+        );
+
+        assert!(resolved.flag_enabled("link-dead-code"));
+        assert_eq!(
+            resolved.unstable_flag("location-detail"),
+            Some(Some("none".to_owned()))
+        );
+        assert_eq!(resolved.link_arguments(), vec!["/OPT:REF".to_owned()]);
+
+        let environment = CargoEnvironment {
+            rustflags: Some("-C link-dead-code".to_owned()),
+            ..CargoEnvironment::default()
+        };
+        let from_environment = resolve(&[], &environment, "x86_64-unknown-linux-gnu");
+
+        assert!(matches!(
+            from_environment.source,
+            RustflagsSource::Environment { .. }
+        ));
+        assert!(from_environment.flag_enabled("link-dead-code"));
     }
 }
