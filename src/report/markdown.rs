@@ -15,7 +15,7 @@
 //! keeps the per-tier overview a table would have provided.
 
 use crate::Resolution;
-use crate::finding::{Finding, Fixability, Tier};
+use crate::finding::{Finding, Tier};
 use crate::report::{MAGNITUDE_LEGEND, Report};
 
 /// Render `report` as a Markdown document.
@@ -159,7 +159,7 @@ fn render_finding(position: usize, finding: &Finding, resolution: &Resolution) -
         finding.runtime_cost.as_str()
     ));
 
-    if let Some(fixability) = reported_fixability(finding.fixability) {
+    if let Some(fixability) = finding.fixability.reported() {
         output.push_str(&format!("- **Fix:** {fixability}\n"));
     }
 
@@ -201,17 +201,6 @@ fn render_finding(position: usize, finding: &Finding, resolution: &Resolution) -
     }
 
     output
-}
-
-/// The fixability a report states, or [`None`] when there is no automated fix.
-///
-/// A report-only finding would state only that no fix exists, which the absence
-/// of the field already says.
-fn reported_fixability(fixability: Fixability) -> Option<&'static str> {
-    match fixability {
-        Fixability::Safe | Fixability::Consequential => Some(fixability.as_str()),
-        Fixability::ReportOnly => None,
-    }
 }
 
 /// Escape prose for a Markdown paragraph.

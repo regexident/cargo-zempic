@@ -2026,9 +2026,9 @@ fn renderers_omit_the_fixability_of_a_report_only_finding() {
         "the cost row ends at `runtime`: {human}"
     );
 
-    assert!(!markdown.contains("| Fix |"), "{markdown}");
+    assert_eq!(markdown.matches("- **Fix:** ").count(), 1, "{markdown}");
+    assert!(markdown.contains("- **Fix:** safe\n"), "{markdown}");
     assert!(!markdown.contains("report-only"), "{markdown}");
-    assert!(!markdown.contains("| safe |"), "{markdown}");
 
     assert_eq!(json.matches("\"fixability\"").count(), 1, "{json}");
     assert!(json.contains("\"fixability\": \"safe\""), "{json}");
