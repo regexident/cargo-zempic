@@ -3574,6 +3574,114 @@ fn rustflags_shadowed_is_quiet_without_a_cargo_configuration() {
     );
 }
 
+/// The findings for an already materialized workspace under `environment`
+/// and a pinned target.
+///
+/// The environment's chain ceiling must name `workspace`'s own root for the
+/// workspace's configuration file to take part in resolution.
+fn findings_in_workspace(
+    workspace: &common::MaterializedWorkspace,
+    target: &str,
+    environment: cargo_zempic::cargo_config::CargoEnvironment,
+) -> Vec<cargo_zempic::finding::Finding> {
+    let mut config = analyze_config(workspace, &[]);
+    config.target = Some(target.to_owned());
+    config.environment = environment;
+
+    cargo_zempic::analyze(&config)
+        .expect("the analysis succeeds")
+        .findings
+}
+
+#[test]
+fn rustflags_shadowed_names_an_environment_mapped_winner() {
+    use cargo_zempic::cargo_config::CargoEnvironment;
+
+    let workspace = common::Fixture::new("link-dead-code").materialize();
+    let variable = "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS";
+    let environment = CargoEnvironment {
+        target_rustflags: [(variable.to_owned(), "-C target-cpu=native".to_owned())].into(),
+        ..CargoEnvironment::sealed(workspace.root())
+    };
+
+    let findings = findings_in_workspace(&workspace, "x86_64-unknown-linux-gnu", environment);
+    let finding = finding_for(&findings, "config/rustflags-shadowed");
+
+    let location = finding
+        .location
+        .as_ref()
+        .expect("the shadowed key is declared in a file");
+    assert_eq!(location.span.key, "build.rustflags");
+    assert!(
+        finding.detail.contains(variable),
+        "the detail must name the winning variable: {}",
+        finding.detail
+    );
+    assert!(
+        !finding_rules(&findings).contains(&"config/link-dead-code".to_owned()),
+        "the shadowed `build.rustflags` flag must not fire: {:?}",
+        finding_rules(&findings)
+    );
+}
+
+#[test]
+fn cargo_build_rustflags_and_build_rustflags_are_both_live() {
+    use cargo_zempic::cargo_config::CargoEnvironment;
+    use cargo_zempic::finding::Fixability;
+
+    let workspace = common::Fixture::new("link-dead-code").materialize();
+    let environment = CargoEnvironment {
+        build_rustflags: Some("-C target-cpu=native".to_owned()),
+        ..CargoEnvironment::sealed(workspace.root())
+    };
+
+    let findings = findings_in_workspace(&workspace, "x86_64-unknown-linux-gnu", environment);
+
+    assert!(
+        !finding_rules(&findings).contains(&"config/rustflags-shadowed".to_owned()),
+        "the variable joins the build rank instead of shadowing it: {:?}",
+        finding_rules(&findings)
+    );
+
+    let finding = finding_for(&findings, "config/link-dead-code");
+    let location = finding
+        .location
+        .as_ref()
+        .expect("the flag is declared in a file");
+
+    assert_eq!(location.span.key, "build.rustflags");
+    assert_eq!(finding.fixability, Fixability::Safe);
+}
+
+#[test]
+fn rustflags_shadowed_reports_an_inert_environment_mapped_entry() {
+    use cargo_zempic::cargo_config::CargoEnvironment;
+
+    let workspace = common::Fixture::new("fully-optimized").materialize();
+    let environment = CargoEnvironment {
+        rustflags: Some("-C target-cpu=native".to_owned()),
+        build_rustflags: Some("-C opt-level=z".to_owned()),
+        ..CargoEnvironment::sealed(workspace.root())
+    };
+
+    let findings = findings_for_environment(
+        "fully-optimized",
+        Some("x86_64-unknown-linux-gnu"),
+        environment,
+    );
+    let finding = finding_for(&findings, "config/rustflags-shadowed");
+
+    assert_eq!(finding.location, None);
+    assert_eq!(finding.title, "`CARGO_BUILD_RUSTFLAGS` is inert");
+    assert!(
+        finding
+            .detail
+            .contains("the `RUSTFLAGS` environment variable is the source cargo applies here"),
+        "the detail must name the winning variable: {}",
+        finding.detail
+    );
+}
+
 // MARK: config/link-dead-code
 
 /// The findings a named fixture produces under `environment`, optionally for
@@ -3674,6 +3782,38 @@ fn link_dead_code_is_report_only_from_the_environment() {
         "the detail must name the environment variable: {}",
         finding.detail
     );
+}
+
+#[test]
+fn link_dead_code_fires_from_cargo_build_rustflags() {
+    use cargo_zempic::cargo_config::CargoEnvironment;
+    use cargo_zempic::finding::Fixability;
+
+    let workspace = common::Fixture::new("fully-optimized").materialize();
+    let environment = CargoEnvironment {
+        build_rustflags: Some("-C link-dead-code".to_owned()),
+        ..CargoEnvironment::sealed(workspace.root())
+    };
+
+    let findings = findings_for_environment(
+        "fully-optimized",
+        Some("x86_64-unknown-linux-gnu"),
+        environment,
+    );
+    let finding = finding_for(&findings, "config/link-dead-code");
+
+    assert_eq!(finding.fixability, Fixability::ReportOnly);
+    assert!(
+        finding.detail.contains("CARGO_BUILD_RUSTFLAGS"),
+        "the detail must name the environment variable: {}",
+        finding.detail
+    );
+
+    let location = finding
+        .location
+        .as_ref()
+        .expect("the finding points at the intended key");
+    assert_eq!(location.span.key, "build.rustflags");
 }
 
 #[test]

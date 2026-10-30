@@ -10,7 +10,7 @@
 //! configuration files' text, so a finding here is about what cargo applies
 //! rather than about what a file happens to contain.
 
-use crate::cargo_config::RustflagsSource;
+use crate::cargo_config::{RustflagsOrigin, RustflagsSource};
 use crate::finding::{
     Change, Confidence, Effort, Finding, Fixability, Location, RuleId, RuntimeCost,
 };
@@ -170,9 +170,9 @@ struct DeadCodeSource {
 /// individually. A remedy can only be written to a file the project owns, so
 /// an entry in a chain file outside `workspace_root` is reported with
 /// [`Fixability::ReportOnly`] and any other with `fixability`. When no live
-/// entry carries the flag, the environment supplied it or the resolution is
-/// otherwise unattributable, and the result points at the file a remedy would
-/// create.
+/// entry carries the flag, the resolution is unattributable, and the result
+/// points at the file a remedy would create. An entry read from an environment
+/// variable has no file to edit and is reported without a fix.
 fn dead_code_source(
     resolved: &crate::cargo_config::ResolvedRustflags,
     workspace_root: &camino::Utf8Path,
@@ -193,6 +193,16 @@ fn dead_code_source(
             .find(|entry| crate::cargo_config::flag_enabled(&entry.flags, "link-dead-code")),
         RustflagsSource::Environment { .. } | RustflagsSource::Unset => None,
     };
+
+    if let Some(RustflagsOrigin::Environment { variable }) =
+        carrying_entry.map(|entry| &entry.origin)
+    {
+        return DeadCodeSource {
+            location: intended_span(workspace_root, "build.rustflags"),
+            fixability: Fixability::ReportOnly,
+            description: format!("the `{variable}` environment variable"),
+        };
+    }
 
     let Some(span) = carrying_entry.and_then(|entry| entry.key_span()) else {
         return DeadCodeSource {

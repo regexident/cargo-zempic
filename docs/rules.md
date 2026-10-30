@@ -497,15 +497,20 @@ Cargo resolves `rustflags` from exactly one of three ranks, in this order:
    even when empty.
 2. Every `target.<triple>.rustflags` table matching the triple being built,
    concatenated with every `target.'cfg(...)'.rustflags` table found anywhere
-   in the configuration chain.
-3. The `build.rustflags` key.
+   in the configuration chain. The `CARGO_TARGET_<TRIPLE>_RUSTFLAGS`
+   environment variable is part of this rank: cargo appends its flags after the
+   matching triple table's.
+3. The `build.rustflags` key. The `CARGO_BUILD_RUSTFLAGS` environment variable
+   is part of this rank: cargo appends its flags to `build.rustflags`.
 
 Cargo never merges flags across these ranks. It takes the first one present in
 the list above and ignores the rest outright, including every entry a lower
 rank declares. Appending a flag to `build.rustflags` while a `target.*` table
-is present therefore has no effect at all: cargo never reads it, so the flag
-never reaches the compiler regardless of how it is spelled or how many flags
-sit beside it.
+is present therefore has no effect at all, since cargo never reads it, so the
+flag never reaches the compiler regardless of how it is spelled or how many
+flags sit beside it. An environment-mapped entry that a higher rank shadows is
+reported the same way, without a file location, since it is declared in no
+file.
 
 A `config.toml` is read bottom-up relative to the package directory: the
 nearest file's keys win over a more distant one's for the same rank, and the
@@ -584,14 +589,14 @@ as live, never a shadowed entry's flags.
 
 ## Report-only sources
 
-Applying this rule's fix means removing the flag from the file that sets it.
-That is only possible when the file is one the project under analysis owns —
-a chain file inside the workspace root. A `RUSTFLAGS` or
-`CARGO_ENCODED_RUSTFLAGS` environment variable sets no file at all, and a
-chain file above the workspace root belongs to the user's machine rather than
-to the project, so in both cases the finding still fires but drops to
-report-only: the change is real, but it is the user's to make, not a safe
-automated edit.
+Applying this rule's fix means removing the flag from the file that sets it,
+which is only possible when the file is one the project under analysis owns, a
+chain file inside the workspace root. A `RUSTFLAGS`,
+`CARGO_ENCODED_RUSTFLAGS`, `CARGO_BUILD_RUSTFLAGS` or
+`CARGO_TARGET_<TRIPLE>_RUSTFLAGS` environment variable sets no file at all, and
+a chain file above the workspace root belongs to the user's machine rather than
+to the project. In both cases the finding still fires but drops to report-only:
+the change is real, but it is the user's to make, not a safe automated edit.
 
 ## Effect on section garbage collection
 

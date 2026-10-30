@@ -26,14 +26,14 @@ as live, never a shadowed entry's flags.
 
 ## Report-only sources
 
-Applying this rule's fix means removing the flag from the file that sets it.
-That is only possible when the file is one the project under analysis owns —
-a chain file inside the workspace root. A `RUSTFLAGS` or
-`CARGO_ENCODED_RUSTFLAGS` environment variable sets no file at all, and a
-chain file above the workspace root belongs to the user's machine rather than
-to the project, so in both cases the finding still fires but drops to
-report-only: the change is real, but it is the user's to make, not a safe
-automated edit.
+Applying this rule's fix means removing the flag from the file that sets it,
+which is only possible when the file is one the project under analysis owns, a
+chain file inside the workspace root. A `RUSTFLAGS`,
+`CARGO_ENCODED_RUSTFLAGS`, `CARGO_BUILD_RUSTFLAGS` or
+`CARGO_TARGET_<TRIPLE>_RUSTFLAGS` environment variable sets no file at all, and
+a chain file above the workspace root belongs to the user's machine rather than
+to the project. In both cases the finding still fires but drops to report-only:
+the change is real, but it is the user's to make, not a safe automated edit.
 
 ## Effect on section garbage collection
 
