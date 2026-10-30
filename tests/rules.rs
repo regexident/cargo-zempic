@@ -2471,7 +2471,7 @@ fn json_document_emits_advice_as_a_string_or_null() {
 }
 
 #[test]
-fn markdown_renderer_folds_advice_into_the_detail_cell() {
+fn markdown_renderer_states_advice_on_its_own_line() {
     use cargo_zempic::finding::{Magnitude, Severity, Tier};
 
     let mut advised = finding(
@@ -2486,9 +2486,10 @@ fn markdown_renderer_folds_advice_into_the_detail_cell() {
     let rendered = cargo_zempic::report::markdown::render(&report_of(vec![advised]));
 
     assert!(
-        rendered.contains("| detail Advice: keep it small |"),
+        rendered.contains("\n> **Advice:** keep it small\n"),
         "{rendered}"
     );
+    assert!(!rendered.contains("detail Advice:"), "{rendered}");
 }
 
 #[test]

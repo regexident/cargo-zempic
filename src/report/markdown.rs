@@ -88,6 +88,7 @@ fn render_tiers(report: &Report) -> String {
 
         for finding in findings {
             output.push_str(&render_row(finding, &report.resolution));
+            output.push_str(&render_advice(finding));
         }
     }
 
@@ -123,17 +124,21 @@ fn render_row(finding: &Finding, resolution: &Resolution) -> String {
         cell(&location),
         cell(finding.effort.as_str()),
         cell(finding.runtime_cost.as_str()),
-        cell(&detail_with_advice(finding)),
+        cell(&finding.detail),
         cell(&finding.tradeoff),
     )
 }
 
-/// The Detail cell's text: the detail alone, or the detail with the advice
-/// appended behind an `Advice:` label when the finding carries one.
-fn detail_with_advice(finding: &Finding) -> String {
+/// Render a finding's advice as a blockquote below its table row.
+///
+/// The advice is prose about the finding's subject, not a field of it, so it
+/// cannot share the dense Detail cell: a table cell is one line of text, and
+/// folding the advice into it buries a whole recommendation inside a row.
+/// A blockquote sets it apart as an aside.
+fn render_advice(finding: &Finding) -> String {
     match &finding.advice {
-        Some(advice) => format!("{} Advice: {advice}", finding.detail),
-        None => finding.detail.clone(),
+        Some(advice) => format!("\n> **Advice:** {advice}\n\n"),
+        None => String::new(),
     }
 }
 
