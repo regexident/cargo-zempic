@@ -2563,13 +2563,8 @@ fn markdown_report() -> cargo_zempic::report::Report {
     ])
 }
 
-/// The number of cells a Markdown table row carries, counting unescaped pipes.
-fn unescaped_cell_count(line: &str) -> usize {
-    line.replace("\\|", "\u{0}").split('|').count()
-}
-
 #[test]
-fn markdown_renderer_emits_a_table_per_non_empty_tier() {
+fn markdown_renderer_opens_each_non_empty_tier_with_an_index() {
     let report = markdown_report();
 
     let rendered = cargo_zempic::report::markdown::render(&report);
@@ -2578,55 +2573,103 @@ fn markdown_renderer_emits_a_table_per_non_empty_tier() {
     assert!(rendered.contains("## Tier 4: Dependencies"), "{rendered}");
     assert!(!rendered.contains("## Tier 2"), "{rendered}");
 
-    let table_lines: Vec<&str> = rendered
-        .lines()
-        .filter(|line| line.starts_with("| "))
-        .collect();
-
-    // Each tier contributes a header row, a separator row and its rows; all
-    // must agree on the column count.
-    let expected = unescaped_cell_count(table_lines[0]);
-
-    for line in &table_lines {
-        assert_eq!(
-            unescaped_cell_count(line),
-            expected,
-            "a row disagrees on column count: {line}"
-        );
-    }
-}
-
-#[test]
-fn markdown_renderer_states_each_findings_title() {
-    use cargo_zempic::finding::{Magnitude, Severity, Tier};
-
-    let mut titled = finding(
-        "profile/strip",
-        Tier::Foundational,
-        Severity::High,
-        Magnitude::Large,
-        None,
-    );
-    titled.title = "symbols are kept".to_owned();
-
-    let rendered = cargo_zempic::report::markdown::render(&report_of(vec![titled]));
-
-    assert!(rendered.contains("| Finding |"), "{rendered}");
     assert!(
-        rendered.contains("| `profile/strip` | symbols are kept | high |"),
+        rendered.contains("1. **`profile/strip`** — title (high, large)\n"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("2. **`profile/debug-info`** — title (high, moderate)\n"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("1. **`deps/duplicate-versions`** — title (medium, moderate)\n"),
         "{rendered}"
     );
 }
 
 #[test]
-fn markdown_renderer_escapes_pipes_and_newlines_in_cells() {
+fn markdown_renderer_numbers_each_findings_subsection() {
     let report = markdown_report();
 
     let rendered = cargo_zempic::report::markdown::render(&report);
 
-    assert!(rendered.contains("a \\| b"), "{rendered}");
-    assert!(rendered.contains("line one line two"), "{rendered}");
-    assert!(!rendered.contains("a | b"), "{rendered}");
+    assert!(
+        rendered.contains("\n\n### 1. profile/strip: title\n"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("\n\n### 2. profile/debug-info: title\n"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("\n\n### 1. deps/duplicate-versions: title\n"),
+        "{rendered}"
+    );
+
+    // A subsection is a heading of its own; nothing in it may be mistaken for
+    // a table row.
+    assert!(!rendered.contains("| --- |"), "{rendered}");
+}
+
+#[test]
+fn markdown_renderer_states_each_finding_fact_on_its_own_line() {
+    use cargo_zempic::finding::{
+        Change, Effort, Fixability, Location, Magnitude, RuntimeCost, Severity, Tier,
+    };
+
+    let mut detailed = finding(
+        "profile/strip",
+        Tier::Foundational,
+        Severity::High,
+        Magnitude::Large,
+        Some(Change {
+            current: "unset".to_owned(),
+            recommended: "\"symbols\"".to_owned(),
+        }),
+    );
+    detailed.effort = Effort::Moderate;
+    detailed.runtime_cost = RuntimeCost::Notable;
+    detailed.fixability = Fixability::Consequential;
+    detailed.package = Some("alpha".to_owned());
+    detailed.location = Some(Location::new(KeySpan {
+        file: camino::Utf8PathBuf::from("Cargo.toml"),
+        key: "profile.release.strip".to_owned(),
+        line: 14,
+        column: 1,
+    }));
+
+    let rendered = cargo_zempic::report::markdown::render(&report_of(vec![detailed]));
+
+    for expected in [
+        "- **Change:** `unset` -> `\"symbols\"`\n",
+        "- **Severity:** high\n",
+        "- **Magnitude:** large\n",
+        "- **Effort:** moderate\n",
+        "- **Runtime cost:** notable\n",
+        "- **Fix:** consequential\n",
+        "- **Location:** `Cargo.toml:14`\n",
+        "- **Package:** `alpha`\n",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "missing {expected:?}: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn markdown_renderer_keeps_each_field_on_one_line() {
+    let report = markdown_report();
+
+    let rendered = cargo_zempic::report::markdown::render(&report);
+
+    // A pipe is literal prose outside a table, so it stays unescaped; a
+    // newline would end the paragraph, so it becomes a space.
+    assert!(rendered.contains("\na | b\n"), "{rendered}");
+    assert!(
+        rendered.contains("*Tradeoff:* line one line two\n"),
+        "{rendered}"
+    );
 }
 
 #[test]

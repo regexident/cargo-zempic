@@ -12,24 +12,94 @@ expression: document
 
 ## Tier 1: Foundational
 
-| Rule | Finding | Severity | Magnitude | Change | Location | Effort | Runtime cost | Detail | Tradeoff |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `profile/strip` | Symbols are retained in the linked artifact | high | large | unset -> "symbols" |  | trivial | none | The symbol table and the strings it references are kept in the linked artifact even though they are not needed to run it. | Stripping removes function names from backtraces and profiler output. |
-| `profile/missing-config` | The profile sets nothing explicitly | medium | moderate |  |  | trivial | none | Every setting falls back to cargo's defaults, which favor compile time over a small artifact. The other findings in this report name the settings to set. | There is nothing to lose by configuring the profile. |
+1. **`profile/strip`** — Symbols are retained in the linked artifact (high, large)
+2. **`profile/missing-config`** — The profile sets nothing explicitly (medium, moderate)
+
+### 1. profile/strip: Symbols are retained in the linked artifact
+
+- **Change:** `unset` -> `"symbols"`
+- **Severity:** high
+- **Magnitude:** large
+- **Effort:** trivial
+- **Runtime cost:** none
+- **Fix:** safe
+
+The symbol table and the strings it references are kept in the linked artifact even though they are not needed to run it.
+
+*Tradeoff:* Stripping removes function names from backtraces and profiler output.
+
+### 2. profile/missing-config: The profile sets nothing explicitly
+
+- **Severity:** medium
+- **Magnitude:** moderate
+- **Effort:** trivial
+- **Runtime cost:** none
+
+Every setting falls back to cargo's defaults, which favor compile time over a small artifact. The other findings in this report name the settings to set.
+
+*Tradeoff:* There is nothing to lose by configuring the profile.
 
 ## Tier 2: Compiler
 
-| Rule | Finding | Severity | Magnitude | Change | Location | Effort | Runtime cost | Detail | Tradeoff |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `profile/opt-level:size` | The optimization level does not target size | high | large | unset -> "z" |  | trivial | notable | The compiler optimizes for speed. Optimizing for size lets it drop code that exists only to run faster. | Runtime cost, pronounced with `"z"` on compute-heavy code. |
-| `profile/lto` | Link-time optimization is partial or disabled | medium | moderate | unset -> "fat" |  | trivial | none | Optimizing across crate boundaries removes code a per-crate build must keep. | Link time rises substantially. |
-| `profile/codegen-units` | The crate is split across several code generation units | low | negligible | unset -> 1 |  | trivial | none | A single code generation unit lets `profile/lto` optimize across the whole crate; with several units, that optimization is limited. | Compiles are slower; the setting is what unlocks link-time optimization. |
+1. **`profile/opt-level:size`** — The optimization level does not target size (high, large)
+2. **`profile/lto`** — Link-time optimization is partial or disabled (medium, moderate)
+3. **`profile/codegen-units`** — The crate is split across several code generation units (low, negligible)
+
+### 1. profile/opt-level:size: The optimization level does not target size
+
+- **Change:** `unset` -> `"z"`
+- **Severity:** high
+- **Magnitude:** large
+- **Effort:** trivial
+- **Runtime cost:** notable
+- **Fix:** consequential
+
+The compiler optimizes for speed. Optimizing for size lets it drop code that exists only to run faster.
+
+*Tradeoff:* Runtime cost, pronounced with `"z"` on compute-heavy code.
+
+### 2. profile/lto: Link-time optimization is partial or disabled
+
+- **Change:** `unset` -> `"fat"`
+- **Severity:** medium
+- **Magnitude:** moderate
+- **Effort:** trivial
+- **Runtime cost:** none
+- **Fix:** consequential
+
+Optimizing across crate boundaries removes code a per-crate build must keep.
+
+*Tradeoff:* Link time rises substantially.
+
+### 3. profile/codegen-units: The crate is split across several code generation units
+
+- **Change:** `unset` -> `1`
+- **Severity:** low
+- **Magnitude:** negligible
+- **Effort:** trivial
+- **Runtime cost:** none
+- **Fix:** consequential
+
+A single code generation unit lets `profile/lto` optimize across the whole crate; with several units, that optimization is limited.
+
+*Tradeoff:* Compiles are slower; the setting is what unlocks link-time optimization.
 
 ## Tier 3: Behavioral
 
-| Rule | Finding | Severity | Magnitude | Change | Location | Effort | Runtime cost | Detail | Tradeoff |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `profile/panic-abort` | The profile unwinds instead of aborting | low | small | unset -> "abort" |  | trivial | none | Unwinding carries the machinery that walks the stack and runs destructors. Aborting on panic lets the compiler drop it. | Aborting loses unwinding: a `catch_unwind` in the workspace or any dependency will no longer recover from a panic. The setting applies workspace-wide, because `panic` cannot be set per package. |
+1. **`profile/panic-abort`** — The profile unwinds instead of aborting (low, small)
+
+### 1. profile/panic-abort: The profile unwinds instead of aborting
+
+- **Change:** `unset` -> `"abort"`
+- **Severity:** low
+- **Magnitude:** small
+- **Effort:** trivial
+- **Runtime cost:** none
+- **Fix:** consequential
+
+Unwinding carries the machinery that walks the stack and runs destructors. Aborting on panic lets the compiler drop it.
+
+*Tradeoff:* Aborting loses unwinding: a `catch_unwind` in the workspace or any dependency will no longer recover from a panic. The setting applies workspace-wide, because `panic` cannot be set per package.
 
 ## Summary
 

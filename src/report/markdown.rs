@@ -1,13 +1,21 @@
 //! The Markdown report document.
 //!
 //! The document carries the same content as the human renderer, laid out for a
-//! pull request or issue: one tiered section per non-empty tier with a findings
-//! table, a conflicts section, a summary and the magnitude legend. It takes no
-//! width and no color: Markdown is not wrapped to a terminal and carries no
-//! ANSI sequence, and the legend is retained verbatim rather than rewrapped.
+//! pull request or issue: one tiered section per non-empty tier, opened by a
+//! one-line index of its findings and followed by a numbered subsection per
+//! finding, then a conflicts section, a summary and the magnitude legend. It
+//! takes no width and no color: Markdown is not wrapped to a terminal and
+//! carries no ANSI sequence, and the legend is retained verbatim rather than
+//! rewrapped.
+//!
+//! A finding has no natural home in a wide table: nine columns force every cell
+//! to a fragment of a sentence, and the prose fields, which are the substance
+//! of a finding, get the same width as a severity word. A subsection per
+//! finding instead gives each field its own line or paragraph, and the index
+//! keeps the per-tier overview a table would have provided.
 
 use crate::Resolution;
-use crate::finding::{Finding, Tier};
+use crate::finding::{Finding, Fixability, Tier};
 use crate::report::{MAGNITUDE_LEGEND, Report};
 
 /// Render `report` as a Markdown document.
@@ -63,8 +71,8 @@ fn render_facts(resolution: &Resolution) -> String {
     output
 }
 
-/// Render one `## Tier` section per non-empty tier, each with its findings
-/// table.
+/// Render one `## Tier` section per non-empty tier, each with an index of its
+/// findings followed by their subsections.
 fn render_tiers(report: &Report) -> String {
     let mut output = String::new();
 
@@ -81,74 +89,146 @@ fn render_tiers(report: &Report) -> String {
             title_case(tier.title()),
         ));
 
-        output.push_str(
-            "| Rule | Finding | Severity | Magnitude | Change | Location | Effort | Runtime cost | Detail | Tradeoff |\n",
-        );
-        output.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
+        output.push_str(&render_index(&findings));
 
-        for finding in findings {
-            output.push_str(&render_row(finding, &report.resolution));
-            output.push_str(&render_advice(finding));
+        for (position, finding) in findings.iter().enumerate() {
+            let separator = if position == 0 { "" } else { "\n" };
+
+            output.push_str(&format!(
+                "{separator}{}",
+                render_finding(position + 1, finding, &report.resolution)
+            ));
         }
     }
 
     output
 }
 
-/// Render one findings-table row.
-fn render_row(finding: &Finding, resolution: &Resolution) -> String {
-    let change = finding.change.as_ref().map_or_else(String::new, |change| {
-        format!("{} -> {}", change.current, change.recommended)
-    });
-    let location = finding
-        .location
-        .as_ref()
-        .map_or_else(String::new, |location| {
-            let file = location
-                .span
-                .file
-                .strip_prefix(&resolution.workspace_root)
-                .map(camino::Utf8Path::to_owned)
-                .unwrap_or_else(|_| location.span.file.clone());
+/// Render the numbered index that opens a tier.
+///
+/// Each entry states the finding's rule, headline, severity and magnitude on
+/// one line, so a reader sees what the tier holds without opening a subsection.
+fn render_index(findings: &[&Finding]) -> String {
+    let mut output = String::new();
 
-            format!("{}:{}", file, location.span.line)
-        });
+    for (position, finding) in findings.iter().enumerate() {
+        output.push_str(&format!(
+            "{}. **`{}`** — {} ({}, {})\n",
+            position + 1,
+            finding.rule,
+            inline(&finding.title),
+            finding.severity.as_str(),
+            finding.magnitude.as_str(),
+        ));
+    }
 
-    format!(
-        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-        cell(&format!("`{}`", finding.rule)),
-        cell(&finding.title),
-        cell(finding.severity.as_str()),
-        cell(finding.magnitude.as_str()),
-        cell(&change),
-        cell(&location),
-        cell(finding.effort.as_str()),
-        cell(finding.runtime_cost.as_str()),
-        cell(&finding.detail),
-        cell(&finding.tradeoff),
-    )
+    output.push('\n');
+
+    output
 }
 
-/// Render a finding's advice as a blockquote below its table row.
+/// Render one finding as a numbered `###` subsection.
 ///
-/// The advice is prose about the finding's subject, not a field of it, so it
-/// cannot share the dense Detail cell: a table cell is one line of text, and
-/// folding the advice into it buries a whole recommendation inside a row.
-/// A blockquote sets it apart as an aside.
-fn render_advice(finding: &Finding) -> String {
-    match &finding.advice {
-        Some(advice) => format!("\n> **Advice:** {advice}\n\n"),
-        None => String::new(),
+/// The facts a reader can scan are bulleted, one per line, so that a diff, a
+/// search or a line-oriented reader can address each field on its own. The
+/// prose fields follow as paragraphs, with the advice blockquoted so it reads
+/// as an aside rather than as more detail.
+fn render_finding(position: usize, finding: &Finding, resolution: &Resolution) -> String {
+    let mut output = format!(
+        "### {position}. {}: {}\n\n",
+        finding.rule,
+        inline(&finding.title),
+    );
+
+    if let Some(change) = &finding.change {
+        output.push_str(&format!(
+            "- **Change:** `{}` -> `{}`\n",
+            paragraph(&change.current),
+            paragraph(&change.recommended),
+        ));
+    }
+
+    output.push_str(&format!("- **Severity:** {}\n", finding.severity.as_str()));
+    output.push_str(&format!(
+        "- **Magnitude:** {}\n",
+        finding.magnitude.as_str()
+    ));
+    output.push_str(&format!("- **Effort:** {}\n", finding.effort.as_str()));
+    output.push_str(&format!(
+        "- **Runtime cost:** {}\n",
+        finding.runtime_cost.as_str()
+    ));
+
+    if let Some(fixability) = reported_fixability(finding.fixability) {
+        output.push_str(&format!("- **Fix:** {fixability}\n"));
+    }
+
+    if let Some(location) = &finding.location {
+        let file = location
+            .span
+            .file
+            .strip_prefix(&resolution.workspace_root)
+            .map(camino::Utf8Path::to_owned)
+            .unwrap_or_else(|_| location.span.file.clone());
+
+        output.push_str(&format!(
+            "- **Location:** `{}:{}`\n",
+            paragraph(file.as_str()),
+            location.span.line,
+        ));
+    }
+
+    if let Some(package) = &finding.package {
+        output.push_str(&format!("- **Package:** `{}`\n", paragraph(package)));
+    }
+
+    output.push_str(&format!("\n{}\n", paragraph(&finding.detail)));
+
+    if let Some(advice) = &finding.advice {
+        output.push_str(&format!("\n> **Advice:** {}\n", paragraph(advice)));
+    }
+
+    output.push_str(&format!("\n*Tradeoff:* {}\n", paragraph(&finding.tradeoff)));
+
+    if !finding.references.is_empty() {
+        let references: Vec<String> = finding
+            .references
+            .iter()
+            .map(|reference| inline(reference))
+            .collect();
+
+        output.push_str(&format!("\n*References:* {}\n", references.join(", ")));
+    }
+
+    output
+}
+
+/// The fixability a report states, or [`None`] when there is no automated fix.
+///
+/// A report-only finding would state only that no fix exists, which the absence
+/// of the field already says.
+fn reported_fixability(fixability: Fixability) -> Option<&'static str> {
+    match fixability {
+        Fixability::Safe | Fixability::Consequential => Some(fixability.as_str()),
+        Fixability::ReportOnly => None,
     }
 }
 
-/// Escape `text` for a Markdown table cell.
+/// Escape prose for a Markdown paragraph.
 ///
-/// A pipe would otherwise add a column and shift every cell after it; a newline
-/// cannot appear in a cell at all, so it becomes a space. The escape is applied
-/// to every cell, including constants, so a future value cannot break the table.
-fn cell(text: &str) -> String {
-    text.replace('|', "\\|").replace(['\n', '\r'], " ")
+/// A newline would otherwise end the paragraph and turn the rest of the field
+/// into stray text, so it becomes a space. A pipe is not escaped: outside a
+/// table it is literal text, and escaping it would show a backslash.
+fn paragraph(text: &str) -> String {
+    text.replace(['\n', '\r'], " ")
+}
+
+/// Escape prose for a span that must stay on one line.
+///
+/// This is [`paragraph`] plus pipe escaping, for text spliced into a line that
+/// already carries Markdown syntax, where a stray pipe is at best noise.
+fn inline(text: &str) -> String {
+    paragraph(text).replace('|', "\\|")
 }
 
 /// Render a tier name in title case.
