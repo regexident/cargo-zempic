@@ -83,11 +83,7 @@ fn render_tiers(report: &Report) -> String {
             continue;
         }
 
-        output.push_str(&format!(
-            "\n## Tier {}: {}\n\n",
-            index + 1,
-            title_case(tier.title()),
-        ));
+        output.push_str(&format!("\n## Tier {}: {}\n\n", index + 1, tier.heading(),));
 
         output.push_str(&render_index(&findings));
 
@@ -218,22 +214,6 @@ fn paragraph(text: &str) -> String {
 /// already carries Markdown syntax, where a stray pipe is at best noise.
 fn inline(text: &str) -> String {
     paragraph(text).replace('|', "\\|")
-}
-
-/// Render a tier name in title case.
-///
-/// The tier vocabulary is stored uppercase for the human heading; a Markdown
-/// heading reads better in title case, so only the first character is kept
-/// uppercase and the rest lowercased.
-fn title_case(name: &str) -> String {
-    let mut characters = name.chars();
-
-    match characters.next() {
-        Some(first) => {
-            first.to_uppercase().collect::<String>() + &characters.as_str().to_lowercase()
-        }
-        None => String::new(),
-    }
 }
 
 /// Render the conflicts section, when the report has any.

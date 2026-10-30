@@ -56,6 +56,17 @@ impl Tier {
             Tier::Advanced => "ADVANCED",
         }
     }
+
+    /// The heading a Markdown report carries for this tier.
+    pub fn heading(&self) -> &'static str {
+        match self {
+            Tier::Foundational => "Foundational",
+            Tier::Compiler => "Compiler",
+            Tier::Behavioral => "Behavioral",
+            Tier::Dependencies => "Dependencies",
+            Tier::Advanced => "Advanced",
+        }
+    }
 }
 
 /// How much acting on a finding matters.
@@ -773,6 +784,20 @@ mod tests {
         RuntimeCost, Selector, SelectorError, Severity, Tier,
     };
     use crate::dimension::Dimension;
+
+    #[test]
+    fn tier_heading_names_every_tier() {
+        assert_eq!(
+            Tier::ALL.map(|tier| tier.heading()),
+            [
+                "Foundational",
+                "Compiler",
+                "Behavioral",
+                "Dependencies",
+                "Advanced"
+            ]
+        );
+    }
 
     #[test]
     fn rule_id_parses_a_dimension_neutral_path() {
