@@ -174,6 +174,14 @@ impl<T> Resolved<T> {
     pub fn is_cargo_default(&self) -> bool {
         matches!(self.provenance, Provenance::CargoDefault)
     }
+
+    /// Returns true when a manifest sets the value, in this profile or in one it inherits.
+    pub fn is_configured(&self) -> bool {
+        matches!(
+            self.provenance,
+            Provenance::Explicit { .. } | Provenance::Inherited { .. }
+        )
+    }
 }
 
 /// A profile with every setting resolved to an effective value.
@@ -207,6 +215,43 @@ pub struct ResolvedProfile {
     /// well as the profile: `unpacked` for an Apple target under the `dev`
     /// profile and `off` everywhere else.
     pub split_debuginfo: Resolved<SplitDebuginfo>,
+}
+
+impl ResolvedProfile {
+    /// Returns true when a manifest sets at least one of the profile's settings.
+    ///
+    /// Every field is bound by a destructure without `..`, so adding a field
+    /// to `ResolvedProfile` is a compile error here until it is classified as
+    /// a setting or ignored. Inherited settings count as configured, because
+    /// the parent profile declares them; only a value no manifest sets
+    /// anywhere is unconfigured.
+    pub fn configures_any_setting(&self) -> bool {
+        let Self {
+            name: _,
+            inherits_chain: _,
+            opt_level,
+            lto,
+            strip,
+            panic,
+            debug,
+            codegen_units,
+            incremental,
+            debug_assertions,
+            overflow_checks,
+            split_debuginfo,
+        } = self;
+
+        opt_level.is_configured()
+            || lto.is_configured()
+            || strip.is_configured()
+            || panic.is_configured()
+            || debug.is_configured()
+            || codegen_units.is_configured()
+            || incremental.is_configured()
+            || debug_assertions.is_configured()
+            || overflow_checks.is_configured()
+            || split_debuginfo.is_configured()
+    }
 }
 
 /// One of cargo's four built-in profiles.
@@ -1533,5 +1578,44 @@ mod tests {
             }
             other => panic!("expected ProfileInheritsCycle, got {other:?}"),
         }
+    }
+
+    fn key_span(key: &str) -> crate::manifest::KeySpan {
+        crate::manifest::KeySpan {
+            file: "Cargo.toml".into(),
+            key: key.to_owned(),
+            line: 1,
+            column: 1,
+        }
+    }
+
+    #[test]
+    fn builtin_defaults_configure_no_setting() {
+        assert!(!builtin_defaults(BuiltinProfile::Release, LINUX).configures_any_setting());
+    }
+
+    #[test]
+    fn an_explicit_split_debuginfo_configures_the_profile() {
+        let mut profile = builtin_defaults(BuiltinProfile::Release, LINUX);
+        profile.split_debuginfo = Resolved::new(
+            SplitDebuginfo::Packed,
+            Provenance::Explicit {
+                profile: "release".to_owned(),
+                key: key_span("profile.release.split-debuginfo"),
+            },
+        );
+
+        assert!(profile.configures_any_setting());
+
+        let mut inherited = builtin_defaults(BuiltinProfile::Release, LINUX);
+        inherited.lto = Resolved::new(
+            Lto::Fat,
+            Provenance::Inherited {
+                from: "release".to_owned(),
+                key: key_span("profile.release.lto"),
+            },
+        );
+
+        assert!(inherited.configures_any_setting());
     }
 }

@@ -2942,6 +2942,33 @@ fn missing_config_is_quiet_for_an_inherited_profile() {
     );
 }
 
+#[test]
+fn missing_config_is_quiet_when_only_split_debuginfo_is_set() {
+    let workspace = common::Fixture::new("bare-release").materialize();
+
+    let manifest = concat!(
+        "[package]\n",
+        "name = \"bare-release\"\n",
+        "version = \"0.1.0\"\n",
+        "edition = \"2021\"\n\n",
+        "[[bin]]\n",
+        "name = \"bare-release\"\n",
+        "path = \"src/main.rs\"\n\n",
+        "[profile.release]\n",
+        "split-debuginfo = \"packed\"\n",
+    );
+    std::fs::write(workspace.root().join("Cargo.toml"), manifest).unwrap();
+
+    let report =
+        cargo_zempic::analyze(&analyze_config(&workspace, &[])).expect("the analysis succeeds");
+
+    assert!(
+        !finding_rules(&report.findings).contains(&"profile/missing-config".to_owned()),
+        "a profile that sets only `split-debuginfo` is configured: {:?}",
+        finding_rules(&report.findings)
+    );
+}
+
 // MARK: Tier 2 compiler rules
 
 #[test]

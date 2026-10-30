@@ -175,26 +175,9 @@ impl Rule for MissingConfigRule {
             return Vec::new();
         }
 
-        // Every field is enumerated explicitly rather than reflected over, so
-        // adding a setting to `ResolvedProfile` without considering this rule
-        // fails to compile instead of silently changing the condition. An
-        // inherited setting counts as configured, because the parent declares
-        // it; only a value no manifest sets anywhere is absent.
         let profile = &context.resolution.profile;
-        let configured = [
-            profile.opt_level.is_explicit() || is_inherited(&profile.opt_level),
-            profile.lto.is_explicit() || is_inherited(&profile.lto),
-            profile.strip.is_explicit() || is_inherited(&profile.strip),
-            profile.panic.is_explicit() || is_inherited(&profile.panic),
-            profile.debug.is_explicit() || is_inherited(&profile.debug),
-            profile.codegen_units.is_explicit() || is_inherited(&profile.codegen_units),
-            profile.incremental.is_explicit() || is_inherited(&profile.incremental),
-            profile.debug_assertions.is_explicit() || is_inherited(&profile.debug_assertions),
-            profile.overflow_checks.is_explicit() || is_inherited(&profile.overflow_checks),
-            profile.split_debuginfo.is_explicit() || is_inherited(&profile.split_debuginfo),
-        ];
 
-        if configured.iter().any(|set| *set) {
+        if profile.configures_any_setting() {
             return Vec::new();
         }
 
@@ -711,11 +694,6 @@ fn location_of<T>(setting: &Resolved<T>) -> Option<KeySpan> {
         Provenance::Explicit { key, .. } | Provenance::Inherited { key, .. } => Some(key.clone()),
         Provenance::CargoDefault => None,
     }
-}
-
-/// Whether a setting's value was inherited from another profile.
-fn is_inherited<T>(setting: &Resolved<T>) -> bool {
-    matches!(setting.provenance, Provenance::Inherited { .. })
 }
 
 /// Render a `strip` value the way a manifest spells it.
