@@ -4,8 +4,9 @@
 //! location of the keys it reasons about so findings can point at them. A
 //! [`toml_edit::Document`] supplies both, but a key's recorded location is a
 //! byte range into the source text, while findings report one-based line and
-//! column positions. Converting between the two requires the original text, so
-//! [`ManifestDocument`] retains it alongside the parsed document.
+//! column positions. Converting between the two requires the line structure of
+//! the original text, so [`ManifestDocument`] retains the byte offset of every
+//! newline alongside the parsed document.
 
 use camino::{Utf8Path, Utf8PathBuf};
 
@@ -25,11 +26,13 @@ pub struct KeySpan {
     pub column: usize,
 }
 
-/// A `Cargo.toml` parsed for analysis, retaining the text its spans refer to.
+/// A `Cargo.toml` parsed for analysis, retaining the line structure its spans
+/// refer to.
 #[derive(Debug)]
 pub struct ManifestDocument {
     path: Utf8PathBuf,
-    text: String,
+    /// Ascending byte offsets of every `'\n'` in the parsed text.
+    newlines: Vec<usize>,
     document: toml_edit::Document<String>,
 }
 
@@ -67,7 +70,7 @@ impl ManifestDocument {
 
         Ok(Self {
             path: path.to_owned(),
-            text: text.to_owned(),
+            newlines: text.match_indices('\n').map(|(index, _)| index).collect(),
             document,
         })
     }
@@ -116,13 +119,33 @@ impl ManifestDocument {
     /// Convert a byte offset in the original text to a one-based line and
     /// column.
     fn position_at(&self, offset: usize) -> (usize, usize) {
-        let prefix = &self.text[..offset];
-        let line = prefix.matches('\n').count() + 1;
-        let column = match prefix.rfind('\n') {
-            Some(newline) => prefix.len() - newline,
-            None => prefix.len() + 1,
+        let index = self.newlines.partition_point(|newline| *newline < offset);
+        let column = match index {
+            0 => offset + 1,
+            _ => offset - self.newlines[index - 1],
         };
 
-        (line, column)
+        (index + 1, column)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ManifestDocument;
+    use camino::Utf8Path;
+
+    #[test]
+    fn key_span_reports_positions_on_every_line() {
+        let path = Utf8Path::new("Cargo.toml");
+        let text = "[package]\nname = \"demo\"\n\n[profile.release]\n  lto = true\n";
+        let document = ManifestDocument::parse(path, text).unwrap();
+
+        let package = document.key_span("package").unwrap();
+        let name = document.key_span("package.name").unwrap();
+        let lto = document.key_span("profile.release.lto").unwrap();
+
+        assert_eq!((package.line, package.column), (1, 2));
+        assert_eq!((name.line, name.column), (2, 1));
+        assert_eq!((lto.line, lto.column), (5, 3));
     }
 }

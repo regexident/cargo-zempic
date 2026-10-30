@@ -143,20 +143,21 @@ fn cargo_home_from_process() -> Option<camino::Utf8PathBuf> {
     camino::Utf8PathBuf::from_path_buf(home.join(".cargo")).ok()
 }
 
-/// A cargo configuration file parsed for analysis, retaining the text its
-/// spans refer to.
+/// A cargo configuration file parsed for analysis, retaining the line
+/// structure its spans refer to.
 ///
 /// A key's recorded location in a [`toml_edit::Document`] is a byte range into
 /// the source text, while findings report one-based line and column
-/// positions. Converting between the two requires the original text, the same
-/// requirement [`manifest::ManifestDocument`](crate::manifest::ManifestDocument)
+/// positions. Converting between the two requires the byte offset of every
+/// newline in the original text, the same requirement [`manifest::ManifestDocument`](crate::manifest::ManifestDocument)
 /// carries for a `Cargo.toml`. The two types duplicate that conversion rather
 /// than share it, to keep a cargo configuration file's read and parse errors
 /// distinct from a manifest's.
 #[derive(Debug)]
 pub struct CargoConfigDocument {
     path: camino::Utf8PathBuf,
-    text: String,
+    /// Ascending byte offsets of every `'\n'` in the parsed text.
+    newlines: Vec<usize>,
     document: toml_edit::Document<String>,
 }
 
@@ -197,7 +198,7 @@ impl CargoConfigDocument {
 
         Ok(Self {
             path: path.to_owned(),
-            text: text.to_owned(),
+            newlines: text.match_indices('\n').map(|(index, _)| index).collect(),
             document,
         })
     }
@@ -255,14 +256,13 @@ impl CargoConfigDocument {
     /// [`manifest::ManifestDocument`](crate::manifest::ManifestDocument), to
     /// keep this type's errors distinct from a manifest's.
     fn position_at(&self, offset: usize) -> (usize, usize) {
-        let prefix = &self.text[..offset];
-        let line = prefix.matches('\n').count() + 1;
-        let column = match prefix.rfind('\n') {
-            Some(newline) => prefix.len() - newline,
-            None => prefix.len() + 1,
+        let index = self.newlines.partition_point(|newline| *newline < offset);
+        let column = match index {
+            0 => offset + 1,
+            _ => offset - self.newlines[index - 1],
         };
 
-        (line, column)
+        (index + 1, column)
     }
 }
 
@@ -1102,6 +1102,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(span.line, 2);
+    }
+
+    #[test]
+    fn key_span_reports_an_indented_key_on_a_later_line() {
+        use super::CargoConfigDocument;
+
+        let path = Utf8Path::new("/probe/config.toml");
+        let text = "[build]\n\n  rustflags = []\n";
+        let document = CargoConfigDocument::parse(path, text).unwrap();
+
+        let span = document.key_span("build.rustflags").unwrap();
+
+        assert_eq!(span.line, 3);
+        assert_eq!(span.column, 3);
     }
 
     #[test]
