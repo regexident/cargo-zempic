@@ -241,18 +241,19 @@ fn confidence_of(resolved: &ResolvedRustflags) -> Confidence {
 
 /// The location a nightly finding points at.
 ///
-/// The first live entry in chain order names the key in the configuration file
-/// nearest the package among the chain files carrying the resolved rank; that
-/// is the key a reader edits to change the flags cargo applies. When the
-/// resolution has no live entry — an environment-supplied `RUSTFLAGS` or
-/// `CARGO_ENCODED_RUSTFLAGS`, or a chain reaching no configuration file — the
+/// The first live entry declared in a chain file, in chain order, names the key
+/// in the configuration file nearest the package among the chain files
+/// carrying the resolved rank; that is the key a reader edits to change the
+/// flags cargo applies. When the resolution has no such entry — an
+/// environment-supplied `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS`, or a chain
+/// reaching no configuration file — the
 /// finding points at `build.rustflags` in the workspace root's
 /// `.cargo/config.toml`, the file a remedy would create.
 fn location_of(workspace_root: &Utf8Path, resolved: &ResolvedRustflags) -> KeySpan {
     resolved
         .live
-        .first()
-        .map(|entry| entry.key.clone())
+        .iter()
+        .find_map(|entry| entry.key_span().cloned())
         .unwrap_or_else(|| intended_span(workspace_root, "build.rustflags"))
 }
 
@@ -315,7 +316,9 @@ fn build(
 #[cfg(test)]
 mod tests {
     use super::{confidence_of, location_of, shadowed_location_detail};
-    use crate::cargo_config::{ResolvedRustflags, RustflagsEntry, RustflagsSource};
+    use crate::cargo_config::{
+        ResolvedRustflags, RustflagsEntry, RustflagsOrigin, RustflagsSource,
+    };
     use crate::finding::Confidence;
     use crate::manifest::KeySpan;
     use camino::{Utf8Path, Utf8PathBuf};
@@ -323,12 +326,12 @@ mod tests {
     /// A configuration entry declaring one flag list at `key`.
     fn entry(file: &str, key: &str, flags: &[&str]) -> RustflagsEntry {
         RustflagsEntry {
-            key: KeySpan {
+            origin: RustflagsOrigin::File(KeySpan {
                 file: Utf8PathBuf::from(file),
                 key: key.to_owned(),
                 line: 1,
                 column: 1,
-            },
+            }),
             flags: flags.iter().map(|flag| (*flag).to_owned()).collect(),
         }
     }
@@ -402,7 +405,7 @@ mod tests {
 
         assert_eq!(
             location_of(workspace_root, &with_live),
-            with_live.live[0].key,
+            with_live.live[0].key_span().cloned().unwrap(),
             "the nearest live entry names the key a reader edits"
         );
 

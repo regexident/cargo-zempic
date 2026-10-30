@@ -400,14 +400,47 @@ pub enum RustflagsSource {
     Unset,
 }
 
-/// One `rustflags` array found in one chain file, carrying the span of the
-/// key that declares it.
+/// Where a `rustflags` array was declared.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RustflagsOrigin {
+    /// A key in a chain file, carrying the span of the key that declares the
+    /// array.
+    File(crate::manifest::KeySpan),
+    /// An environment variable cargo maps onto a configuration key.
+    Environment {
+        /// The variable's name.
+        variable: String,
+    },
+}
+
+/// One `rustflags` array, together with where it was declared.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RustflagsEntry {
-    /// Location of the key declaring this array.
-    pub key: crate::manifest::KeySpan,
+    /// Where this array was declared.
+    pub origin: RustflagsOrigin,
     /// The array's string elements, in source order.
     pub flags: Vec<String>,
+}
+
+impl RustflagsEntry {
+    /// The dotted configuration key declaring this array for a
+    /// [`RustflagsOrigin::File`], or the variable name for a
+    /// [`RustflagsOrigin::Environment`].
+    pub fn name(&self) -> &str {
+        match &self.origin {
+            RustflagsOrigin::File(span) => span.key.as_str(),
+            RustflagsOrigin::Environment { variable } => variable.as_str(),
+        }
+    }
+
+    /// The span of the key declaring this array, or [`None`] for an
+    /// environment variable, which has no position in any file.
+    pub fn key_span(&self) -> Option<&crate::manifest::KeySpan> {
+        match &self.origin {
+            RustflagsOrigin::File(span) => Some(span),
+            RustflagsOrigin::Environment { .. } => None,
+        }
+    }
 }
 
 /// The rustflags cargo applies after resolving its three-rank precedence over
@@ -524,7 +557,10 @@ fn collect_build_entry(document: &CargoConfigDocument) -> Option<CollectedEntry>
     let key = document.key_span("build.rustflags")?;
 
     Some(CollectedEntry {
-        entry: RustflagsEntry { key, flags },
+        entry: RustflagsEntry {
+            origin: RustflagsOrigin::File(key),
+            flags,
+        },
     })
 }
 
@@ -577,7 +613,10 @@ fn collect_target_entries(
         };
 
         entries.push(CollectedEntry {
-            entry: RustflagsEntry { key, flags },
+            entry: RustflagsEntry {
+                origin: RustflagsOrigin::File(key),
+                flags,
+            },
         });
     }
 
@@ -1267,7 +1306,7 @@ mod tests {
         assert_eq!(resolved.source, RustflagsSource::TargetTables);
         assert_eq!(resolved.flags, vec!["-C".to_owned(), "b".to_owned()]);
         assert_eq!(resolved.shadowed.len(), 1);
-        assert_eq!(resolved.shadowed[0].key.key, "build.rustflags");
+        assert_eq!(resolved.shadowed[0].name(), "build.rustflags");
 
         let resolved_foreign_triple = resolve(&[document], &environment, "aarch64-apple-darwin");
 

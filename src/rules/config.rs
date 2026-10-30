@@ -62,11 +62,7 @@ fn live_source_description(resolved: &crate::cargo_config::ResolvedRustflags) ->
         RustflagsSource::TargetTables | RustflagsSource::BuildTable
             if !resolved.live.is_empty() =>
         {
-            let keys: Vec<&str> = resolved
-                .live
-                .iter()
-                .map(|entry| entry.key.key.as_str())
-                .collect();
+            let keys: Vec<&str> = resolved.live.iter().map(|entry| entry.name()).collect();
 
             format!("`{}`", keys.join("`, `"))
         }
@@ -123,7 +119,7 @@ impl Rule for RustflagsShadowedRule {
                 let detail = format!(
                     "Cargo takes rustflags from one source only. {live_description} is \
                      the source cargo applies here; `{}` is set but never read.{capped_note}",
-                    entry.key.key,
+                    entry.name(),
                 );
 
                 findings.push(build(
@@ -132,8 +128,8 @@ impl Rule for RustflagsShadowedRule {
                     confidence,
                     metadata.fixability,
                     None,
-                    Some(entry.key.clone()),
-                    &format!("`{}` is inert", entry.key.key),
+                    entry.key_span().cloned(),
+                    &format!("`{}` is inert", entry.name()),
                     detail,
                     "Existing flags are silently inert.",
                 ));
@@ -198,7 +194,7 @@ fn dead_code_source(
         RustflagsSource::Environment { .. } | RustflagsSource::Unset => None,
     };
 
-    let Some(entry) = carrying_entry else {
+    let Some(span) = carrying_entry.and_then(|entry| entry.key_span()) else {
         return DeadCodeSource {
             location: intended_span(workspace_root, "build.rustflags"),
             fixability: Fixability::ReportOnly,
@@ -206,16 +202,16 @@ fn dead_code_source(
         };
     };
 
-    let fixability = if entry.key.file.starts_with(workspace_root) {
+    let fixability = if span.file.starts_with(workspace_root) {
         fixability
     } else {
         Fixability::ReportOnly
     };
 
     DeadCodeSource {
-        location: entry.key.clone(),
+        location: span.clone(),
         fixability,
-        description: format!("`{}` in `{}`", entry.key.key, entry.key.file),
+        description: format!("`{}` in `{}`", span.key, span.file),
     }
 }
 
@@ -432,8 +428,8 @@ impl Rule for LinkGcSectionsRule {
 
             let location = resolved
                 .live
-                .first()
-                .map(|entry| entry.key.clone())
+                .iter()
+                .find_map(|entry| entry.key_span().cloned())
                 .unwrap_or_else(|| {
                     intended_span(&context.resolution.workspace_root, "build.rustflags")
                 });
@@ -559,7 +555,7 @@ fn build(
 mod tests {
     use super::{dead_code_source, intended_span, live_source_description};
     use crate::cargo_config::{
-        EnvironmentVariable, ResolvedRustflags, RustflagsEntry, RustflagsSource,
+        EnvironmentVariable, ResolvedRustflags, RustflagsEntry, RustflagsOrigin, RustflagsSource,
     };
     use crate::finding::Fixability;
     use crate::manifest::KeySpan;
@@ -568,12 +564,12 @@ mod tests {
     /// A configuration entry declaring one flag list at `key`.
     fn entry(file: &str, key: &str, flags: &[&str]) -> RustflagsEntry {
         RustflagsEntry {
-            key: KeySpan {
+            origin: RustflagsOrigin::File(KeySpan {
                 file: Utf8PathBuf::from(file),
                 key: key.to_owned(),
                 line: 1,
                 column: 1,
-            },
+            }),
             flags: flags.iter().map(|flag| (*flag).to_owned()).collect(),
         }
     }
