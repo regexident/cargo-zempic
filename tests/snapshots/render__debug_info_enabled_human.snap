@@ -13,7 +13,7 @@ cargo-zempic 0.0.1
   ╭ HIGH  profile/debug-info                                            moderate
   │ change    true -> false
   │ at        Cargo.toml:17  profile.release.debug
-  │ cost      effort trivial · runtime none · fix safe
+  │ cost      effort trivial · runtime none · fix safe · confidence high
   │ why       Debug information is produced and then dropped by stripping.
   │           Disabling `debug` saves compile time and the intermediate disk it
   │           writes while leaving the linked artifact largely unchanged.

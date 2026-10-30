@@ -149,6 +149,10 @@ fn render_finding(position: usize, finding: &Finding, resolution: &Resolution) -
         "- **Magnitude:** {}\n",
         finding.magnitude.as_str()
     ));
+    output.push_str(&format!(
+        "- **Confidence:** {}\n",
+        finding.confidence.as_str()
+    ));
     output.push_str(&format!("- **Effort:** {}\n", finding.effort.as_str()));
     output.push_str(&format!(
         "- **Runtime cost:** {}\n",

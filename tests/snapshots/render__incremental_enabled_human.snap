@@ -13,7 +13,7 @@ cargo-zempic 0.0.1
   ╭ MEDIUM  profile/incremental                                            small
   │ change    true -> false
   │ at        Cargo.toml:16  profile.release.incremental
-  │ cost      effort trivial · runtime none · fix safe
+  │ cost      effort trivial · runtime none · fix safe · confidence high
   │ why       Incremental compilation trades runtime speed for rebuild speed,
   │           which a shipped artifact does not need.
   ╰ tradeoff  Rebuilds are slower.

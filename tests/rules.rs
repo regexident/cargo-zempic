@@ -1745,7 +1745,10 @@ fn human_renderer_renders_rows_in_order_and_omits_absent_ones() {
 
     assert_eq!(found, labels.len());
     assert!(rendered.contains("  │ at        Cargo.toml:6  profile.release.strip"));
-    assert!(rendered.contains("  │ cost      effort trivial · runtime none · fix safe"));
+    assert!(
+        rendered
+            .contains("  │ cost      effort trivial · runtime none · fix safe · confidence high")
+    );
 
     let bare_block = rendered
         .split("  ╭ LOW")
@@ -1990,6 +1993,34 @@ fn human_summary_omits_the_fixable_line_when_nothing_is_fixable() {
     let rendered = cargo_zempic::report::human::render(&report, false, 80);
 
     assert!(!rendered.contains("auto-fixable"), "{rendered}");
+}
+
+#[test]
+fn renderers_state_each_findings_confidence() {
+    use cargo_zempic::finding::{Confidence, Fixability, Magnitude, Severity, Tier};
+
+    let mut uncertain = finding(
+        "profile/missing-config",
+        Tier::Foundational,
+        Severity::Medium,
+        Magnitude::Moderate,
+        None,
+    );
+    uncertain.fixability = Fixability::ReportOnly;
+    uncertain.confidence = Confidence::Medium;
+
+    let report = report_of(vec![uncertain]);
+    let human = cargo_zempic::report::human::render(&report, false, 1000);
+    let markdown = cargo_zempic::report::markdown::render(&report);
+
+    assert!(
+        human.contains("effort trivial · runtime none · confidence medium"),
+        "{human}"
+    );
+    assert!(
+        markdown.contains("- **Confidence:** medium\n"),
+        "{markdown}"
+    );
 }
 
 #[test]
@@ -2643,7 +2674,7 @@ fn markdown_renderer_states_each_finding_fact_on_its_own_line() {
     for expected in [
         "- **Change:** `unset` -> `\"symbols\"`\n",
         "- **Severity:** high\n",
-        "- **Magnitude:** large\n",
+        "- **Magnitude:** large\n- **Confidence:** high\n",
         "- **Effort:** moderate\n",
         "- **Runtime cost:** notable\n",
         "- **Fix:** consequential\n",

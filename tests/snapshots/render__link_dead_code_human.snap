@@ -13,7 +13,7 @@ cargo-zempic 0.0.1
   ╭ HIGH  config/link-dead-code                                             none
   │ package   link-dead-code
   │ at        .cargo/config.toml:2  build.rustflags
-  │ cost      effort trivial · runtime none · fix safe
+  │ cost      effort trivial · runtime none · fix safe · confidence high
   │ why       `build.rustflags` in
   │           `[WORKSPACE_ROOT]/.cargo/config.toml`
   │           sets `-C link-dead-code`, which keeps symbols the linker would
@@ -26,7 +26,8 @@ cargo-zempic 0.0.1
   │ package   link-dead-code
   │ change    unset -> -C link-arg=-Wl,--gc-sections
   │ at        .cargo/config.toml:2  build.rustflags
-  │ cost      effort trivial · runtime none · fix consequential
+  │ cost      effort trivial · runtime none · fix consequential · confidence
+  │           high
   │ why       `build.rustflags` in
   │           `[WORKSPACE_ROOT]/.cargo/config.toml`
   │           sets `-C link-dead-code`, which suppresses rustc's own

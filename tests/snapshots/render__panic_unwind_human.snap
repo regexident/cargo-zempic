@@ -13,7 +13,8 @@ cargo-zempic 0.0.1
   ╭ LOW  profile/panic-abort                                               small
   │ change    "unwind" -> "abort"
   │ at        Cargo.toml:14  profile.release.panic
-  │ cost      effort trivial · runtime none · fix consequential
+  │ cost      effort trivial · runtime none · fix consequential · confidence
+  │           high
   │ why       Unwinding carries the machinery that walks the stack and runs
   │           destructors. Aborting on panic lets the compiler drop it.
   │ tradeoff  Aborting loses unwinding: a `catch_unwind` in the workspace or any

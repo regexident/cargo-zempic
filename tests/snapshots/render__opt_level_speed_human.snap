@@ -13,7 +13,8 @@ cargo-zempic 0.0.1
   ╭ HIGH  profile/opt-level:size                                           large
   │ change    3 -> "z"
   │ at        Cargo.toml:11  profile.release.opt-level
-  │ cost      effort trivial · runtime notable · fix consequential
+  │ cost      effort trivial · runtime notable · fix consequential · confidence
+  │           high
   │ why       The compiler optimizes for speed. Optimizing for size lets it drop
   │           code that exists only to run faster.
   ╰ tradeoff  Runtime cost, pronounced with `"z"` on compute-heavy code.

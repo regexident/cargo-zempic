@@ -13,7 +13,7 @@ cargo-zempic 0.0.1
   ╭ HIGH  workspace/ignored-member-profile                                  none
   │ package   member
   │ at        member/Cargo.toml:10  profile
-  │ cost      effort trivial · runtime none · fix safe
+  │ cost      effort trivial · runtime none · fix safe · confidence high
   │ why       Cargo honors a `[profile.*]` table only in the workspace root
   │           manifest, so this member's table has no effect. Moving the
   │           settings to the root makes them take effect.

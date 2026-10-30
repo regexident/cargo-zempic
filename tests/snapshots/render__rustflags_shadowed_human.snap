@@ -13,7 +13,7 @@ cargo-zempic 0.0.1
   ╭ HIGH  config/rustflags-shadowed                                         none
   │ package   rustflags-shadowed
   │ at        .cargo/config.toml:2  build.rustflags
-  │ cost      effort trivial · runtime none
+  │ cost      effort trivial · runtime none · confidence high
   │ why       Cargo takes rustflags from one source only.
   │           `target.'x86_64-unknown-linux-gnu'.rustflags` is the source cargo
   │           applies here; `build.rustflags` is set but never read.

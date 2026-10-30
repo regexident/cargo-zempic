@@ -20,6 +20,7 @@ expression: document
 - **Change:** `unset` -> `"symbols"`
 - **Severity:** high
 - **Magnitude:** large
+- **Confidence:** high
 - **Effort:** trivial
 - **Runtime cost:** none
 - **Fix:** safe
@@ -32,6 +33,7 @@ The symbol table and the strings it references are kept in the linked artifact e
 
 - **Severity:** medium
 - **Magnitude:** moderate
+- **Confidence:** high
 - **Effort:** trivial
 - **Runtime cost:** none
 
@@ -50,6 +52,7 @@ Every setting falls back to cargo's defaults, which favor compile time over a sm
 - **Change:** `unset` -> `"z"`
 - **Severity:** high
 - **Magnitude:** large
+- **Confidence:** high
 - **Effort:** trivial
 - **Runtime cost:** notable
 - **Fix:** consequential
@@ -63,6 +66,7 @@ The compiler optimizes for speed. Optimizing for size lets it drop code that exi
 - **Change:** `unset` -> `"fat"`
 - **Severity:** medium
 - **Magnitude:** moderate
+- **Confidence:** high
 - **Effort:** trivial
 - **Runtime cost:** none
 - **Fix:** consequential
@@ -76,6 +80,7 @@ Optimizing across crate boundaries removes code a per-crate build must keep.
 - **Change:** `unset` -> `1`
 - **Severity:** low
 - **Magnitude:** negligible
+- **Confidence:** high
 - **Effort:** trivial
 - **Runtime cost:** none
 - **Fix:** consequential
@@ -93,6 +98,7 @@ A single code generation unit lets `profile/lto` optimize across the whole crate
 - **Change:** `unset` -> `"abort"`
 - **Severity:** low
 - **Magnitude:** small
+- **Confidence:** high
 - **Effort:** trivial
 - **Runtime cost:** none
 - **Fix:** consequential

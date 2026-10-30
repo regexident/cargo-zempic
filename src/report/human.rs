@@ -727,6 +727,11 @@ fn finding_rows(finding: &Finding, report: &Report) -> Vec<Row> {
         cost.push((fixability.to_owned(), false));
     }
 
+    cost.push((" · ".to_owned(), true));
+    cost.push(("confidence".to_owned(), true));
+    cost.push((" ".to_owned(), false));
+    cost.push((finding.confidence.as_str().to_owned(), false));
+
     rows.push(Row::styled("cost", &cost));
     rows.push(Row::plain("why", finding.detail.as_str()));
 

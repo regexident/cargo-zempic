@@ -13,7 +13,7 @@ cargo-zempic 0.0.1
   ╭ MEDIUM  profile/overflow-checks                                        small
   │ change    true -> false
   │ at        Cargo.toml:19  profile.release.overflow-checks
-  │ cost      effort trivial · runtime none · fix safe
+  │ cost      effort trivial · runtime none · fix safe · confidence high
   │ why       Integer arithmetic is checked for overflow in the shipped
   │           artifact.
   │ tradeoff  With the checks removed, arithmetic overflow no longer panics; it

@@ -13,7 +13,8 @@ cargo-zempic 0.0.1
   ╭ MEDIUM  profile/lto                                                 moderate
   │ change    "thin" -> "fat"
   │ at        Cargo.toml:12  profile.release.lto
-  │ cost      effort trivial · runtime none · fix consequential
+  │ cost      effort trivial · runtime none · fix consequential · confidence
+  │           high
   │ why       Optimizing across crate boundaries removes code a per-crate build
   │           must keep.
   ╰ tradeoff  Link time rises substantially.

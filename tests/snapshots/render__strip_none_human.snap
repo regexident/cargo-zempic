@@ -13,7 +13,7 @@ cargo-zempic 0.0.1
   ╭ HIGH  profile/strip                                                    large
   │ change    "none" -> "symbols"
   │ at        Cargo.toml:13  profile.release.strip
-  │ cost      effort trivial · runtime none · fix safe
+  │ cost      effort trivial · runtime none · fix safe · confidence high
   │ why       The symbol table and the strings it references are kept in the
   │           linked artifact even though they are not needed to run it.
   │ tradeoff  Stripping removes function names from backtraces and profiler

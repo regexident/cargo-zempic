@@ -13,7 +13,8 @@ cargo-zempic 0.0.1
   ╭ LOW  profile/codegen-units                                        negligible
   │ change    16 -> 1
   │ at        Cargo.toml:15  profile.release.codegen-units
-  │ cost      effort trivial · runtime none · fix consequential
+  │ cost      effort trivial · runtime none · fix consequential · confidence
+  │           high
   │ why       A single code generation unit lets `profile/lto` optimize across
   │           the whole crate; with several units, that optimization is limited.
   │ tradeoff  Compiles are slower; the setting is what unlocks link-time

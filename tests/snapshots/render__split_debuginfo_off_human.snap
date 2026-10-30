@@ -13,7 +13,7 @@ cargo-zempic 0.0.1
   ╭ HIGH  profile/debug-info                                            moderate
   │ change    true -> false
   │ at        Cargo.toml:17  profile.release.debug
-  │ cost      effort trivial · runtime none · fix safe
+  │ cost      effort trivial · runtime none · fix safe · confidence high
   │ why       Debug information is produced and then dropped by stripping.
   │           Disabling `debug` saves compile time and the intermediate disk it
   │           writes while leaving the linked artifact largely unchanged.
@@ -23,7 +23,7 @@ cargo-zempic 0.0.1
   ╭ LOW  profile/split-debuginfo                                           small
   │ change    "off" -> "packed"
   │ at        Cargo.toml:20  profile.release.split-debuginfo
-  │ cost      effort trivial · runtime none · fix safe
+  │ cost      effort trivial · runtime none · fix safe · confidence high
   │ why       On this target debug information is left in the linked artifact.
   │           Splitting it into side files moves it out without discarding it.
   │ tradeoff  This recommendation is platform-specific and the split files must

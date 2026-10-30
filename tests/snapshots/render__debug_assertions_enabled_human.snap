@@ -13,7 +13,7 @@ cargo-zempic 0.0.1
   ╭ MEDIUM  profile/debug-assertions                                       small
   │ change    true -> false
   │ at        Cargo.toml:18  profile.release.debug-assertions
-  │ cost      effort trivial · runtime none · fix safe
+  │ cost      effort trivial · runtime none · fix safe · confidence high
   │ why       Debug assertions and internal consistency checks are compiled into
   │           the shipped artifact.
   │ tradeoff  The removed checks catch bugs; an invariant they guard goes
