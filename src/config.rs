@@ -425,8 +425,12 @@ pub struct Filtered {
 ///
 /// A finding matched by an `--only` selector is exempt from every ignore and
 /// from the advisory gate, because naming a rule is an explicit request for it.
+/// Suppression reads only the ignores that have not expired as of `today`.
+///
 /// Notices are produced from the ignores alone, so an expired or undocumented
-/// ignore warns even in a run with nothing to suppress.
+/// ignore warns even in a run with nothing to suppress. They describe every
+/// declared ignore, whatever the run's package selection or `--only` scope,
+/// because `filter` judges the configuration itself rather than the run.
 ///
 /// The advisory gate never suppresses a finding in the `nightly` category,
 /// whether its fixability is [`crate::finding::Fixability::ReportOnly`] for
@@ -459,6 +463,12 @@ pub fn filter(findings: Vec<crate::finding::Finding>, gates: &Gates, today: Civi
         }
     }
 
+    let active: Vec<&IgnoreRule> = gates
+        .ignore
+        .iter()
+        .filter(|ignore| !ignore.has_expired(today))
+        .collect();
+
     let retained = findings
         .into_iter()
         .filter(|finding| {
@@ -482,9 +492,8 @@ pub fn filter(findings: Vec<crate::finding::Finding>, gates: &Gates, today: Civi
                 return false;
             }
 
-            !gates.ignore.iter().any(|ignore| {
-                !ignore.has_expired(today)
-                    && ignore.selector.matches(&finding.rule)
+            !active.iter().any(|ignore| {
+                ignore.selector.matches(&finding.rule)
                     && ignore.applies_to_package(finding.package.as_deref())
             })
         })
@@ -1110,6 +1119,78 @@ fixable = true
         );
 
         assert_eq!(retained(&filtered), ["profile/lto"]);
+    }
+
+    #[test]
+    fn notices_stay_file_wide_under_package_scope_and_only() {
+        let gates = Gates {
+            ignore: vec![ignore(
+                "profile/lto",
+                None,
+                Some(&["beta"]),
+                Some("2020-01-01"),
+            )],
+            only: vec![Selector::parse("profile/lto").unwrap()],
+            include_advisory: Some(true),
+            allow_nightly: None,
+        };
+
+        let filtered = filter(
+            vec![
+                finding("profile/lto", Some("alpha"), Fixability::Safe),
+                finding("profile/lto", Some("beta"), Fixability::Safe),
+            ],
+            &gates,
+            today(),
+        );
+
+        assert_eq!(retained(&filtered), ["profile/lto", "profile/lto"]);
+        assert_eq!(
+            filtered.notices,
+            vec![
+                crate::report::Notice::ExpiredIgnore {
+                    selector: "profile/lto".to_owned(),
+                    expired: "2020-01-01".to_owned(),
+                },
+                crate::report::Notice::UndocumentedIgnore {
+                    selector: "profile/lto".to_owned(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_active_package_scoped_ignore_yields_to_only() {
+        let scoped = || vec![ignore("profile/lto", Some("reason"), Some(&["beta"]), None)];
+        let findings = || {
+            vec![
+                finding("profile/lto", Some("alpha"), Fixability::Safe),
+                finding("profile/lto", Some("beta"), Fixability::Safe),
+            ]
+        };
+
+        let without_only = Gates {
+            ignore: scoped(),
+            only: Vec::new(),
+            include_advisory: Some(true),
+            allow_nightly: None,
+        };
+        let filtered = filter(findings(), &without_only, today());
+
+        assert_eq!(retained(&filtered), ["profile/lto"]);
+        assert_eq!(filtered.findings[0].package.as_deref(), Some("alpha"));
+        assert!(filtered.notices.is_empty());
+
+        let with_only = Gates {
+            ignore: scoped(),
+            only: vec![Selector::parse("profile/lto").unwrap()],
+            include_advisory: Some(true),
+            allow_nightly: None,
+        };
+        let filtered = filter(findings(), &with_only, today());
+
+        assert_eq!(retained(&filtered), ["profile/lto", "profile/lto"]);
+        assert!(filtered.notices.is_empty());
     }
 
     #[test]
