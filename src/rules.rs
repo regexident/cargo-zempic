@@ -470,32 +470,43 @@ pub fn evaluate(
 }
 
 /// Keep the first finding of each identity, preserving input order.
-fn deduplicate(mut findings: Vec<crate::finding::Finding>) -> Vec<crate::finding::Finding> {
-    let mut kept: Vec<(
-        RuleId,
-        Option<String>,
-        Option<crate::finding::Location>,
-        String,
-    )> = Vec::new();
+///
+/// The identity is the rule, package, full location and detail. Membership is
+/// tracked with keys borrowed from the findings, so no field is cloned and each
+/// finding costs a single hash lookup.
+fn deduplicate(findings: Vec<crate::finding::Finding>) -> Vec<crate::finding::Finding> {
+    // The mask is computed before filtering so the borrowed keys never overlap
+    // with the consumption of `findings`.
+    let keep: Vec<bool> = {
+        let mut seen = std::collections::HashSet::with_capacity(findings.len());
 
-    findings.retain(|finding| {
-        let key = (
-            finding.rule.clone(),
-            finding.package.clone(),
-            finding.location.clone(),
-            finding.detail.clone(),
-        );
+        findings
+            .iter()
+            .map(|finding| {
+                let key = (
+                    &finding.rule,
+                    finding.package.as_deref(),
+                    finding.location.as_ref().map(|location| {
+                        (
+                            location.span.file.as_str(),
+                            location.span.key.as_str(),
+                            location.span.line,
+                            location.span.column,
+                        )
+                    }),
+                    finding.detail.as_str(),
+                );
 
-        if kept.contains(&key) {
-            return false;
-        }
-
-        kept.push(key);
-
-        true
-    });
+                seen.insert(key)
+            })
+            .collect()
+    };
 
     findings
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(finding, keep)| keep.then_some(finding))
+        .collect()
 }
 
 /// The single place every rule's severity is assigned.
@@ -719,6 +730,80 @@ mod tests {
         assert_eq!(kept.len(), 2);
         assert_eq!(kept[0].detail, "same");
         assert_eq!(kept[1].detail, "other");
+    }
+
+    #[test]
+    fn deduplication_compares_every_identity_field() {
+        let location = |key: &str, column: usize| {
+            Some(crate::finding::Location {
+                span: crate::manifest::KeySpan {
+                    file: camino::Utf8PathBuf::from("/w/Cargo.toml"),
+                    key: key.to_owned(),
+                    line: 3,
+                    column,
+                },
+            })
+        };
+
+        let a = detail_probe_finding("d");
+        let b = Finding {
+            rule: RuleId::parse("probe/other").expect("the probe rule parses"),
+            ..detail_probe_finding("d")
+        };
+        let c = Finding {
+            package: Some("alpha".to_owned()),
+            ..detail_probe_finding("d")
+        };
+        let d = Finding {
+            location: location("profile.release.lto", 1),
+            ..detail_probe_finding("d")
+        };
+        let e = Finding {
+            location: location("profile.release.strip", 1),
+            ..detail_probe_finding("d")
+        };
+        let f = Finding {
+            location: location("profile.release.lto", 2),
+            ..detail_probe_finding("d")
+        };
+        let g = Finding {
+            detail: "other".to_owned(),
+            ..detail_probe_finding("d")
+        };
+
+        let kept = deduplicate(vec![
+            a.clone(),
+            b.clone(),
+            c.clone(),
+            d.clone(),
+            e.clone(),
+            f.clone(),
+            g.clone(),
+            a.clone(),
+            d.clone(),
+            g.clone(),
+        ]);
+
+        let summarize = |finding: &Finding| {
+            (
+                finding.rule.to_string(),
+                finding.package.clone(),
+                finding
+                    .location
+                    .as_ref()
+                    .map(|location| (location.span.key.clone(), location.span.column)),
+                finding.detail.clone(),
+            )
+        };
+
+        assert_eq!(kept.len(), 7);
+        assert_eq!(
+            kept.iter().map(summarize).collect::<Vec<_>>(),
+            [&a, &b, &c, &d, &e, &f, &g]
+                .into_iter()
+                .map(summarize)
+                .collect::<Vec<_>>(),
+        );
     }
 
     #[test]
