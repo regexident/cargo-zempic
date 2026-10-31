@@ -1281,7 +1281,8 @@ fn report_of(findings: Vec<cargo_zempic::finding::Finding>) -> cargo_zempic::rep
 /// width is indistinguishable from the header's own lines and would be mistaken
 /// for prose; the wrapped layout is exercised by its own test.
 fn unwrapped_blocks(report: &cargo_zempic::report::Report) -> String {
-    let rendered = cargo_zempic::report::human::render(report, false, 1000);
+    let rendered =
+        cargo_zempic::report::human::render(report, false, 1000, &report.resolution.workspace_root);
     let mut blocks = String::new();
     let mut inside = false;
 
@@ -1340,7 +1341,8 @@ fn span_in(root: &camino::Utf8Path, relative: &str, line: usize) -> KeySpan {
 fn human_renderer_emits_a_section_per_non_empty_tier() {
     let report = five_finding_report();
 
-    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+    let rendered =
+        cargo_zempic::report::human::render(&report, false, 80, &report.resolution.workspace_root);
 
     assert!(
         rendered.contains("── TIER 1 · FOUNDATIONAL ─"),
@@ -1402,7 +1404,8 @@ fn human_renderer_renders_the_change_column_or_the_location() {
     )
     .unwrap();
 
-    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+    let rendered =
+        cargo_zempic::report::human::render(&report, false, 80, &report.resolution.workspace_root);
 
     assert!(
         rendered.contains("  │ change    unset -> \"symbols\""),
@@ -1443,8 +1446,14 @@ fn human_renderer_color_never_changes_the_layout() {
         findings[3].clone(),
         findings[4].clone(),
     ]);
-    let plain = cargo_zempic::report::human::render(&report, false, 1000);
-    let colored = cargo_zempic::report::human::render(&report, true, 1000);
+    let plain = cargo_zempic::report::human::render(
+        &report,
+        false,
+        1000,
+        &report.resolution.workspace_root,
+    );
+    let colored =
+        cargo_zempic::report::human::render(&report, true, 1000, &report.resolution.workspace_root);
 
     assert!(colored.contains('\u{1b}'), "{colored:?}");
 
@@ -1491,7 +1500,8 @@ fn human_renderer_paints_every_gutter_glyph_in_the_severity_style() {
     medium.tradeoff = "Link time rises substantially.".to_owned();
 
     let report = report_of(vec![wrapped, medium]);
-    let colored = cargo_zempic::report::human::render(&report, true, 80);
+    let colored =
+        cargo_zempic::report::human::render(&report, true, 80, &report.resolution.workspace_root);
     let glyphs = ['╭', '│', '╰'];
     let mut blocks: Vec<Vec<&str>> = Vec::new();
 
@@ -1554,7 +1564,8 @@ fn human_renderer_wraps_every_row_inside_the_width() {
     long.tradeoff = "Backtraces lose their names ".repeat(10);
 
     let report = report_of(vec![long]);
-    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+    let rendered =
+        cargo_zempic::report::human::render(&report, false, 80, &report.resolution.workspace_root);
     let lines: Vec<&str> = rendered.lines().collect();
     let block: Vec<&str> = lines
         .iter()
@@ -1765,7 +1776,12 @@ fn human_renderer_renders_rows_in_order_and_omits_absent_ones() {
 
 #[test]
 fn human_renderer_spans_the_title_line_to_the_width() {
-    let rendered = cargo_zempic::report::human::render(&five_finding_report(), false, 80);
+    let rendered = cargo_zempic::report::human::render(
+        &five_finding_report(),
+        false,
+        80,
+        &five_finding_report().resolution.workspace_root,
+    );
 
     let title = rendered
         .lines()
@@ -1781,7 +1797,12 @@ fn human_renderer_spans_tier_headings_to_the_width() {
     let report = five_finding_report();
 
     for width in [80, 100] {
-        let rendered = cargo_zempic::report::human::render(&report, false, width);
+        let rendered = cargo_zempic::report::human::render(
+            &report,
+            false,
+            width,
+            &report.resolution.workspace_root,
+        );
         let headings: Vec<&str> = rendered
             .lines()
             .filter(|line| line.starts_with("── TIER "))
@@ -1805,7 +1826,12 @@ fn human_renderer_spans_tier_headings_to_the_width() {
 
 #[test]
 fn human_renderer_aligns_the_header_labels() {
-    let rendered = cargo_zempic::report::human::render(&five_finding_report(), false, 80);
+    let rendered = cargo_zempic::report::human::render(
+        &five_finding_report(),
+        false,
+        80,
+        &five_finding_report().resolution.workspace_root,
+    );
 
     for prefix in [
         "  workspace:      ",
@@ -1849,7 +1875,8 @@ fn human_summary_colors_each_severity_count() {
         ),
     ]);
 
-    let rendered = cargo_zempic::report::human::render(&report, true, 80);
+    let rendered =
+        cargo_zempic::report::human::render(&report, true, 80, &report.resolution.workspace_root);
 
     assert!(
         rendered.contains(&"2 high".red().to_string()),
@@ -1865,7 +1892,8 @@ fn human_summary_colors_each_severity_count() {
 fn human_renderer_states_there_are_no_findings_when_empty() {
     let report = report_of(Vec::new());
 
-    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+    let rendered =
+        cargo_zempic::report::human::render(&report, false, 80, &report.resolution.workspace_root);
 
     assert!(rendered.contains("cargo-zempic"), "{rendered}");
     assert!(rendered.contains("workspace:"), "{rendered}");
@@ -1884,7 +1912,8 @@ fn human_renderer_emits_no_escape_sequence_without_color() {
         None,
     )]);
 
-    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+    let rendered =
+        cargo_zempic::report::human::render(&report, false, 80, &report.resolution.workspace_root);
 
     assert!(!rendered.contains('\u{1b}'), "{rendered:?}");
 }
@@ -1921,7 +1950,8 @@ fn human_renderer_renders_a_conflict_block() {
     )
     .unwrap();
 
-    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+    let rendered =
+        cargo_zempic::report::human::render(&report, false, 80, &report.resolution.workspace_root);
 
     assert!(
         rendered.contains("CONFLICT  profile/opt-level"),
@@ -1960,7 +1990,8 @@ fn human_summary_lists_only_non_zero_categories() {
 
     let report = report_of(vec![first, second]);
 
-    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+    let rendered =
+        cargo_zempic::report::human::render(&report, false, 80, &report.resolution.workspace_root);
 
     assert!(rendered.contains("SUMMARY"), "{rendered}");
     assert!(rendered.contains("2 findings: 2 high."), "{rendered}");
@@ -1990,7 +2021,8 @@ fn human_summary_omits_the_fixable_line_when_nothing_is_fixable() {
 
     let report = report_of(vec![only]);
 
-    let rendered = cargo_zempic::report::human::render(&report, false, 80);
+    let rendered =
+        cargo_zempic::report::human::render(&report, false, 80, &report.resolution.workspace_root);
 
     assert!(!rendered.contains("auto-fixable"), "{rendered}");
 }
@@ -2010,8 +2042,14 @@ fn renderers_state_each_findings_confidence() {
     uncertain.confidence = Confidence::Medium;
 
     let report = report_of(vec![uncertain]);
-    let human = cargo_zempic::report::human::render(&report, false, 1000);
-    let markdown = cargo_zempic::report::markdown::render(&report);
+    let human = cargo_zempic::report::human::render(
+        &report,
+        false,
+        1000,
+        &report.resolution.workspace_root,
+    );
+    let markdown =
+        cargo_zempic::report::markdown::render(&report, &report.resolution.workspace_root);
 
     assert!(
         human.contains("effort trivial · runtime none · confidence medium"),
@@ -2046,9 +2084,16 @@ fn renderers_omit_the_fixability_of_a_report_only_finding() {
     automatable.fixability = Fixability::Safe;
 
     let report = report_of(vec![automatable, report_only]);
-    let human = cargo_zempic::report::human::render(&report, false, 1000);
-    let markdown = cargo_zempic::report::markdown::render(&report);
-    let json = cargo_zempic::report::json::render(&report).expect("the report renders");
+    let human = cargo_zempic::report::human::render(
+        &report,
+        false,
+        1000,
+        &report.resolution.workspace_root,
+    );
+    let markdown =
+        cargo_zempic::report::markdown::render(&report, &report.resolution.workspace_root);
+    let json = cargo_zempic::report::json::render(&report, &report.resolution.workspace_root)
+        .expect("the report renders");
 
     assert!(human.contains("fix safe"), "{human}");
     assert!(!human.contains("report-only"), "{human}");
@@ -2080,7 +2125,12 @@ fn human_renderer_always_emits_the_magnitude_legend() {
     let empty = report_of(Vec::new());
 
     for report in [&populated, &empty] {
-        let rendered = cargo_zempic::report::human::render(report, false, 80);
+        let rendered = cargo_zempic::report::human::render(
+            report,
+            false,
+            80,
+            &report.resolution.workspace_root,
+        );
 
         assert!(rendered.contains("ordinal judgement"), "{rendered}");
         assert!(rendered.contains("reports no sizes"), "{rendered}");
@@ -2463,7 +2513,8 @@ fn json_report() -> cargo_zempic::report::Report {
 #[test]
 fn json_document_matches_the_checked_in_key_sets() {
     let report = json_report();
-    let document = cargo_zempic::report::json::render(&report).expect("the document renders");
+    let document = cargo_zempic::report::json::render(&report, &report.resolution.workspace_root)
+        .expect("the document renders");
 
     let fixture = schema_fixture();
 
@@ -2490,7 +2541,8 @@ fn json_document_matches_the_checked_in_key_sets() {
 fn json_document_emits_advice_as_a_string_or_null() {
     let report = json_report();
     let document: serde_json::Value = serde_json::from_str(
-        &cargo_zempic::report::json::render(&report).expect("the document renders"),
+        &cargo_zempic::report::json::render(&report, &report.resolution.workspace_root)
+            .expect("the document renders"),
     )
     .expect("the document is JSON");
 
@@ -2514,7 +2566,9 @@ fn markdown_renderer_states_advice_on_its_own_line() {
     );
     advised.advice = Some("keep it small".to_owned());
 
-    let rendered = cargo_zempic::report::markdown::render(&report_of(vec![advised]));
+    let report = report_of(vec![advised]);
+    let render_root = report.resolution.workspace_root.clone();
+    let rendered = cargo_zempic::report::markdown::render(&report, &render_root);
 
     assert!(
         rendered.contains("\n> **Advice:** keep it small\n"),
@@ -2526,7 +2580,8 @@ fn markdown_renderer_states_advice_on_its_own_line() {
 #[test]
 fn json_document_splits_the_rule_path_from_its_dimension() {
     let report = json_report();
-    let document = cargo_zempic::report::json::render(&report).expect("the document renders");
+    let document = cargo_zempic::report::json::render(&report, &report.resolution.workspace_root)
+        .expect("the document renders");
     let parsed: serde_json::Value = serde_json::from_str(&document).expect("the document is JSON");
 
     let first = &parsed["findings"][0];
@@ -2548,7 +2603,8 @@ fn json_document_splits_the_rule_path_from_its_dimension() {
 #[test]
 fn json_document_carries_the_knowledge_base_version() {
     let report = json_report();
-    let document = cargo_zempic::report::json::render(&report).expect("the document renders");
+    let document = cargo_zempic::report::json::render(&report, &report.resolution.workspace_root)
+        .expect("the document renders");
     let parsed: serde_json::Value = serde_json::from_str(&document).expect("the document is JSON");
 
     assert_eq!(parsed["kb_version"], 3, "{document}");
@@ -2598,7 +2654,8 @@ fn markdown_report() -> cargo_zempic::report::Report {
 fn markdown_renderer_opens_each_non_empty_tier_with_an_index() {
     let report = markdown_report();
 
-    let rendered = cargo_zempic::report::markdown::render(&report);
+    let rendered =
+        cargo_zempic::report::markdown::render(&report, &report.resolution.workspace_root);
 
     assert!(rendered.contains("## Tier 1: Foundational"), "{rendered}");
     assert!(rendered.contains("## Tier 4: Dependencies"), "{rendered}");
@@ -2622,7 +2679,8 @@ fn markdown_renderer_opens_each_non_empty_tier_with_an_index() {
 fn markdown_renderer_numbers_each_findings_subsection() {
     let report = markdown_report();
 
-    let rendered = cargo_zempic::report::markdown::render(&report);
+    let rendered =
+        cargo_zempic::report::markdown::render(&report, &report.resolution.workspace_root);
 
     assert!(
         rendered.contains("\n\n### 1. profile/strip: title\n"),
@@ -2669,7 +2727,9 @@ fn markdown_renderer_states_each_finding_fact_on_its_own_line() {
         column: 1,
     }));
 
-    let rendered = cargo_zempic::report::markdown::render(&report_of(vec![detailed]));
+    let report = report_of(vec![detailed]);
+    let render_root = report.resolution.workspace_root.clone();
+    let rendered = cargo_zempic::report::markdown::render(&report, &render_root);
 
     for expected in [
         "- **Change:** `unset` -> `\"symbols\"`\n",
@@ -2692,7 +2752,8 @@ fn markdown_renderer_states_each_finding_fact_on_its_own_line() {
 fn markdown_renderer_keeps_each_field_on_one_line() {
     let report = markdown_report();
 
-    let rendered = cargo_zempic::report::markdown::render(&report);
+    let rendered =
+        cargo_zempic::report::markdown::render(&report, &report.resolution.workspace_root);
 
     // A pipe is literal prose outside a table, so it stays unescaped; a
     // newline would end the paragraph, so it becomes a space.
@@ -2709,7 +2770,8 @@ fn markdown_renderer_retains_the_legend_verbatim() {
     let empty = report_of(Vec::new());
 
     for report in [&populated, &empty] {
-        let rendered = cargo_zempic::report::markdown::render(report);
+        let rendered =
+            cargo_zempic::report::markdown::render(report, &report.resolution.workspace_root);
 
         assert!(
             rendered
