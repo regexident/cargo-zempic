@@ -23,8 +23,7 @@ cargo install cargo-zempic
 cargo zempic check
 ```
 
-Cargo invokes a subcommand as `cargo-zempic zempic check`, injecting its own
-name as the first argument, so both spellings produce the same report.
+![Output of `cargo zempic check`](docs/screenshot.png)
 
 The report groups findings by tier, in the order foundational, compiler, behavioral, dependencies and advanced. Each finding names its rule, severity and magnitude. A right-hand column beside them shows `current -> recommended` for a finding that recommends a setting change, and the file the finding concerns for one that carries no change. The line below carries effort, runtime cost and fixability, followed by the detail and the tradeoff the change carries. After the findings come a section for recommendations that disagree between dimensions, a count summary and the magnitude legend. The JSON document adds two fields the human report does not carry, the package and the confidence of each finding. Configuration notices go to standard error so that a piped report on standard output stays clean; they cover an expired or undocumented ignore, and a rule skipped because cargo would reject the setting in the analyzed profile.
 
