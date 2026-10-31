@@ -1,6 +1,5 @@
 ---
 source: tests/render.rs
-assertion_line: 72
 expression: document
 ---
 # cargo-zempic [VERSION]
@@ -9,7 +8,7 @@ expression: document
 - Members: 1 (1 selected)
 - Profile: `release` (inherits: none)
 - Optimizing for: size
-- Target: `aarch64-apple-darwin`
+- Target: `[TARGET]`
 
 ## Tier 1: Foundational
 

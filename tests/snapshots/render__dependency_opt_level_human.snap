@@ -1,13 +1,12 @@
 ---
 source: tests/render.rs
-assertion_line: 72
 expression: document
 ---
 cargo-zempic [VERSION]
   workspace:      [WORKSPACE_ROOT]  (1 members, 1 selected)
   profile:        release  (inherits: none)
   optimizing for: size
-  target:         aarch64-apple-darwin
+  target:         [TARGET]
 
 ── TIER 2 · COMPILER ──────────────────────────────────────────────── 2 findings
 

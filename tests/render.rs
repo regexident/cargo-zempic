@@ -1,9 +1,9 @@
 //! Snapshot tests of the three renderers over firing fixtures.
 //!
 //! A snapshot is taken over a materialized fixture through each renderer. The
-//! workspace root is normalized to `[WORKSPACE_ROOT]` so a snapshot does not
-//! embed a temporary directory path, and the target triple is pinned where the
-//! rendered content depends on it.
+//! workspace root, the resolved target triple and the package version are
+//! normalized, so a snapshot depends on the fixture and not on the machine or
+//! the build that produced it.
 
 mod common;
 
@@ -50,13 +50,17 @@ fn rendered_for(fixture: &str, format: Format, target: Option<&str>) -> String {
     document.replace(workspace.root().as_str(), "[WORKSPACE_ROOT]")
 }
 
-/// Assert a snapshot under the settings that normalize the workspace root and
-/// the package version.
+/// Assert a snapshot under the settings that normalize the workspace root, the
+/// target triple and the package version.
 ///
 /// Every format prints the version the binary was built at, so a version bump
 /// would otherwise rewrite every snapshot. The redaction applies to all three
 /// renderings of the version: the human and markdown header, and the
 /// `zempic_version` field of the JSON document.
+///
+/// The target triple is the host's unless a fixture pins one, so leaving it
+/// whole would make a snapshot depend on the machine that produced it. Each
+/// format states it once, in its own header, and no finding quotes it.
 fn assert_snapshot(name: &str, document: String) {
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("snapshots");
@@ -68,6 +72,8 @@ fn assert_snapshot(name: &str, document: String) {
         r#""zempic_version": "\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?""#,
         r#""zempic_version": "[VERSION]""#,
     );
+    settings.add_filter(r"(?m)^(  target:         )\S+$", "${1}[TARGET]");
+    settings.add_filter(r"(- Target: `)[^`]+(`)", "${1}[TARGET]${2}");
     settings.bind(|| {
         insta::assert_snapshot!(name, document);
     });
@@ -242,7 +248,6 @@ fn rustflags_shadowed_human() {
 fn snapshots_carry_no_absolute_path() {
     let repository_root = camino::Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let snapshots = repository_root.join("tests/snapshots");
-
     let entries = std::fs::read_dir(&snapshots).expect("the snapshot directory exists");
 
     for entry in entries.flatten() {
