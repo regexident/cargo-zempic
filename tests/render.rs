@@ -50,10 +50,24 @@ fn rendered_for(fixture: &str, format: Format, target: Option<&str>) -> String {
     document.replace(workspace.root().as_str(), "[WORKSPACE_ROOT]")
 }
 
-/// Assert a snapshot under the settings that normalize the workspace root.
+/// Assert a snapshot under the settings that normalize the workspace root and
+/// the package version.
+///
+/// Every format prints the version the binary was built at, so a version bump
+/// would otherwise rewrite every snapshot. The redaction applies to all three
+/// renderings of the version: the human and markdown header, and the
+/// `zempic_version` field of the JSON document.
 fn assert_snapshot(name: &str, document: String) {
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_path("snapshots");
+    settings.add_filter(
+        r"cargo-zempic \d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?",
+        "cargo-zempic [VERSION]",
+    );
+    settings.add_filter(
+        r#""zempic_version": "\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?""#,
+        r#""zempic_version": "[VERSION]""#,
+    );
     settings.bind(|| {
         insta::assert_snapshot!(name, document);
     });
