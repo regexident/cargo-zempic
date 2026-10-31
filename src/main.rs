@@ -86,6 +86,8 @@ fn run(args: &Args) -> anyhow::Result<bool> {
 ///
 /// Returns an error when the JSON document cannot be serialized.
 fn render(report: &Report, color_choice: ColorChoice) -> cargo_zempic::Result<String> {
+    let root = &report.resolution.workspace_root;
+
     match report.settings.format {
         Format::Human => {
             let color = use_color(
@@ -99,11 +101,13 @@ fn render(report: &Report, color_choice: ColorChoice) -> cargo_zempic::Result<St
                     report, color, width,
                 ))
             } else {
-                Ok(cargo_zempic::report::human::render(report, color, width))
+                Ok(cargo_zempic::report::human::render(
+                    report, color, width, root,
+                ))
             }
         }
-        Format::Json => cargo_zempic::report::json::render(report),
-        Format::Markdown => Ok(cargo_zempic::report::markdown::render(report)),
+        Format::Json => cargo_zempic::report::json::render(report, root),
+        Format::Markdown => Ok(cargo_zempic::report::markdown::render(report, root)),
     }
 }
 
