@@ -471,10 +471,11 @@ fn configured_format_is_honored_and_overridden_by_the_argument() {
 
 #[test]
 fn fail_on_never_is_the_default() {
-    let workspace = common::Fixture::new("multi-member").materialize();
+    let workspace = common::Fixture::new("bare-release").materialize();
 
-    // No finding can fire while the registry is empty, so the default is
-    // asserted by the run exiting zero rather than by a gated report.
+    // `bare-release` reports high-severity findings and has no `zempic.toml`,
+    // so a zero exit without `--fail-on` shows that no threshold applies by
+    // default.
     binary()
         .args([
             "check",
@@ -483,6 +484,19 @@ fn fail_on_never_is_the_default() {
         ])
         .assert()
         .code(0);
+
+    // The same invocation must gate under an explicit threshold, which proves
+    // the fixture would fail a run if a default threshold were applied.
+    binary()
+        .args([
+            "check",
+            "--manifest-path",
+            workspace.manifest_path().as_str(),
+            "--fail-on",
+            "high",
+        ])
+        .assert()
+        .code(1);
 }
 
 #[test]
