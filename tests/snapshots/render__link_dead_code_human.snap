@@ -14,10 +14,9 @@ cargo-zempic [VERSION]
   │ package   link-dead-code
   │ at        .cargo/config.toml:2  build.rustflags
   │ cost      effort trivial · runtime none · fix safe · confidence high
-  │ why       `build.rustflags` in
-  │           `[WORKSPACE_ROOT]/.cargo/config.toml`
-  │           sets `-C link-dead-code`, which keeps symbols the linker would
-  │           otherwise discard.
+  │ why       `build.rustflags` in `.cargo/config.toml` sets `-C
+  │           link-dead-code`, which keeps symbols the linker would otherwise
+  │           discard.
   │ tradeoff  The flag increases size; rarely intended outside coverage runs.
   │           Like any rustflags change, removing it invalidates the whole build
   ╰           cache, costing a full rebuild.
@@ -28,9 +27,8 @@ cargo-zempic [VERSION]
   │ at        .cargo/config.toml:2  build.rustflags
   │ cost      effort trivial · runtime none · fix consequential · confidence
   │           high
-  │ why       `build.rustflags` in
-  │           `[WORKSPACE_ROOT]/.cargo/config.toml`
-  │           sets `-C link-dead-code`, which suppresses rustc's own
+  │ why       `build.rustflags` in `.cargo/config.toml` sets `-C
+  │           link-dead-code`, which suppresses rustc's own
   │           section-garbage-collection default. `config/link-dead-code`
   │           reports the flag itself; this finding reports the linker
   │           consequence and the flag that restores the behavior.
