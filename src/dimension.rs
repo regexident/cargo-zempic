@@ -11,7 +11,7 @@
 /// The enum is closed so that a requested dimension is known to be one the
 /// crate implements, rather than an unrecognized name that would silently
 /// select nothing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Debug, clap::ValueEnum)]
 pub enum Dimension {
     /// Producing the smallest possible artifact.
     Size,

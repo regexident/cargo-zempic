@@ -6,24 +6,8 @@
 
 use crate::{AnalysisConfig, dimension::Dimension, workspace};
 use clap::Parser;
-use clap::builder::TypedValueParser;
 
 pub mod reject;
-
-/// Builds the parser for `-O/--optimize-for`, restricting a value to the
-/// dimensions the crate implements.
-///
-/// The accepted names come from the [`Dimension`] the value selects, so an
-/// unrecognized name fails with clap's own diagnostic listing the accepted
-/// names rather than a silently dropped dimension.
-fn dimension_parser() -> clap::builder::ValueParser {
-    clap::builder::PossibleValuesParser::new(std::iter::once(Dimension::Size.as_str()))
-        .map(|name| {
-            Dimension::from_name(&name)
-                .expect("the name was restricted to an implemented dimension")
-        })
-        .into()
-}
 
 /// Builds the parser for a `--ignore`/`--only` selector.
 ///
@@ -32,69 +16,6 @@ fn dimension_parser() -> clap::builder::ValueParser {
 /// names the offending value rather than surfacing after metadata loading.
 fn selector_parser() -> clap::builder::ValueParser {
     clap::builder::ValueParser::new(crate::finding::Selector::parse)
-}
-
-/// Builds the parser for `--format`.
-///
-/// The accepted names come from [`Format`](crate::report::Format)'s own
-/// variants, so `--help` lists them and an unrecognized name fails with
-/// clap's own diagnostic rather than a hand-written message.
-fn format_parser() -> clap::builder::ValueParser {
-    clap::builder::PossibleValuesParser::new(
-        [
-            crate::report::Format::Human,
-            crate::report::Format::Json,
-            crate::report::Format::Markdown,
-        ]
-        .map(|format| format.as_str()),
-    )
-    .map(|name| {
-        crate::report::Format::from_name(&name).expect("the name was restricted to a known format")
-    })
-    .into()
-}
-
-/// Builds the parser for `--fail-on`.
-///
-/// The accepted names come from [`FailOn`](crate::report::FailOn)'s own
-/// variants, so `--help` lists them and an unrecognized name fails with
-/// clap's own diagnostic rather than a hand-written message.
-fn fail_on_parser() -> clap::builder::ValueParser {
-    clap::builder::PossibleValuesParser::new(
-        [
-            crate::report::FailOn::Never,
-            crate::report::FailOn::Low,
-            crate::report::FailOn::Medium,
-            crate::report::FailOn::High,
-        ]
-        .map(|fail_on| fail_on.as_str()),
-    )
-    .map(|name| {
-        crate::report::FailOn::from_name(&name)
-            .expect("the name was restricted to a known threshold")
-    })
-    .into()
-}
-
-/// Builds the parser for `--color`.
-///
-/// The accepted names come from [`ColorChoice`](crate::report::ColorChoice)'s
-/// own variants, so `--help` lists them and an unrecognized name fails with
-/// clap's own diagnostic rather than a hand-written message.
-fn color_parser() -> clap::builder::ValueParser {
-    clap::builder::PossibleValuesParser::new(
-        [
-            crate::report::ColorChoice::Auto,
-            crate::report::ColorChoice::Always,
-            crate::report::ColorChoice::Never,
-        ]
-        .map(|choice| choice.as_str()),
-    )
-    .map(|name| {
-        crate::report::ColorChoice::from_name(&name)
-            .expect("the name was restricted to a known color choice")
-    })
-    .into()
 }
 
 /// The parsed command line, root of the argument grammar.
@@ -143,7 +64,7 @@ pub struct AnalysisArgs {
         value_name = "DIM",
         value_delimiter = ',',
         num_args = 1..,
-        value_parser = dimension_parser(),
+        value_enum,
     )]
     pub optimize_for: Vec<Dimension>,
 
@@ -190,12 +111,12 @@ pub struct AnalysisArgs {
     pub target: Option<String>,
 
     /// The report format. Overrides the `[report] format` of `zempic.toml`.
-    #[arg(long = "format", value_name = "FMT", value_parser = format_parser())]
+    #[arg(long = "format", value_name = "FMT", value_enum)]
     pub format: Option<crate::report::Format>,
 
     /// The severity that gates a non-zero exit code. Overrides the
     /// `[report] fail_on` of `zempic.toml`.
-    #[arg(long = "fail-on", value_name = "SEVERITY", value_parser = fail_on_parser())]
+    #[arg(long = "fail-on", value_name = "SEVERITY", value_enum)]
     pub fail_on: Option<crate::report::FailOn>,
 
     /// Render one line per finding, without the header, tier headings or the
@@ -208,7 +129,7 @@ pub struct AnalysisArgs {
         long = "color",
         value_name = "WHEN",
         default_value = "auto",
-        value_parser = color_parser(),
+        value_enum
     )]
     pub color: crate::report::ColorChoice,
 
@@ -613,5 +534,42 @@ mod tests {
 
             assert_eq!(analysis(&args).color, expected);
         }
+    }
+
+    /// Asserts that every variant's command-line spelling equals the name
+    /// `as_str` reports and that `from_name` maps that name back to it.
+    fn assert_names_agree<T>(
+        as_str: impl Fn(&T) -> &'static str,
+        from_name: impl Fn(&str) -> Option<T>,
+    ) where
+        T: clap::ValueEnum + PartialEq + std::fmt::Debug + Copy,
+    {
+        for variant in T::value_variants() {
+            assert_eq!(
+                variant
+                    .to_possible_value()
+                    .expect("no variant is skipped")
+                    .get_name(),
+                as_str(variant)
+            );
+            assert_eq!(from_name(as_str(variant)), Some(*variant));
+        }
+    }
+
+    #[test]
+    fn command_line_names_match_configuration_names() {
+        assert_names_agree(Dimension::as_str, Dimension::from_name);
+        assert_names_agree(
+            crate::report::Format::as_str,
+            crate::report::Format::from_name,
+        );
+        assert_names_agree(
+            crate::report::FailOn::as_str,
+            crate::report::FailOn::from_name,
+        );
+        assert_names_agree(
+            crate::report::ColorChoice::as_str,
+            crate::report::ColorChoice::from_name,
+        );
     }
 }

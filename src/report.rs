@@ -243,7 +243,7 @@ fn sort_key(finding: &Finding) -> SortKey {
 }
 
 /// The output format a run renders.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Default, Copy, Clone, Eq, PartialEq, Debug, clap::ValueEnum)]
 pub enum Format {
     /// The human-readable report.
     #[default]
@@ -276,7 +276,7 @@ impl Format {
 }
 
 /// The severity at which a finding gates a non-zero exit code.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Default, Copy, Clone, Eq, PartialEq, Debug, clap::ValueEnum)]
 pub enum FailOn {
     /// Never gate on severity.
     #[default]
@@ -343,7 +343,7 @@ pub struct ReportSettings {
 }
 
 /// When color is used in a rendered report.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Default, Copy, Clone, Eq, PartialEq, Debug, clap::ValueEnum)]
 pub enum ColorChoice {
     /// Use color only when the environment and the terminal permit it.
     #[default]
