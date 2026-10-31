@@ -19,10 +19,14 @@ use crate::finding::{Finding, Tier};
 use crate::report::{MAGNITUDE_LEGEND, Report};
 
 /// Render `report` as a Markdown document.
-pub fn render(report: &Report) -> String {
+///
+/// `root` is the path written as the workspace and stripped from a finding's
+/// location, as [`human::render`](crate::report::human::render) documents: a
+/// caller may print a stand-in instead of the root the analysis recorded.
+pub fn render(report: &Report, root: &camino::Utf8Path) -> String {
     let mut output = format!("# cargo-zempic {}\n", env!("CARGO_PKG_VERSION"));
 
-    output.push_str(&render_facts(&report.resolution));
+    output.push_str(&render_facts(&report.resolution, root));
 
     if report.is_empty() {
         output.push_str("\nNo findings.\n");
@@ -39,8 +43,9 @@ pub fn render(report: &Report) -> String {
     output
 }
 
-/// Render the list of facts the human header states.
-fn render_facts(resolution: &Resolution) -> String {
+/// Render the list of facts the human header states, naming the workspace
+/// `root` as [`render`] documents.
+fn render_facts(resolution: &Resolution, root: &camino::Utf8Path) -> String {
     let dimensions: Vec<&str> = resolution
         .dimensions
         .iter()
@@ -55,7 +60,7 @@ fn render_facts(resolution: &Resolution) -> String {
 
     let mut output = String::new();
 
-    output.push_str(&format!("\n- Workspace: `{}`\n", resolution.workspace_root));
+    output.push_str(&format!("\n- Workspace: `{}`\n", root));
     output.push_str(&format!(
         "- Members: {} ({} selected)\n",
         resolution.member_count,

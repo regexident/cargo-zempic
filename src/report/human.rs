@@ -21,8 +21,17 @@ use crate::report::{Report, severity_style};
 ///
 /// `color` decides whether ANSI escape sequences are emitted, and `width` is
 /// the column budget the header and wrapped prose are laid out to.
-pub fn render(report: &Report, color: bool, width: usize) -> String {
-    let mut output = render_header(&report.resolution, color);
+///
+/// `root` is the path printed in place of
+/// [`resolution.workspace_root`](crate::Resolution::workspace_root). A finding
+/// quotes a file's path, and that file lives under the root, so the root's text
+/// reaches the wrapped prose. Taking it as a parameter lets a caller render
+/// against a stand-in of its choosing, rather than substituting the root's text
+/// after wrapping, where the change would land on whatever column the original
+/// length happened to reach. Pass the workspace root itself to render the
+/// report as the analysis recorded it.
+pub fn render(report: &Report, color: bool, width: usize, root: &camino::Utf8Path) -> String {
+    let mut output = render_header(&report.resolution, color, root);
 
     if report.is_empty() {
         output.push_str("No findings.\n");
@@ -208,8 +217,9 @@ fn render_quiet_line(
 ///
 /// The header states the workspace and its member counts, the profile with its
 /// `inherits` chain, the selected dimensions and the target triple. It carries
-/// no size figure: the counts are facts about the report itself.
-fn render_header(resolution: &Resolution, color: bool) -> String {
+/// no size figure: the counts are facts about the report itself. `root` names
+/// the workspace, as [`render`] documents.
+fn render_header(resolution: &Resolution, color: bool, root: &camino::Utf8Path) -> String {
     let mut output = String::new();
 
     output.push_str(&format!("cargo-zempic {}\n", env!("CARGO_PKG_VERSION")));
@@ -225,7 +235,7 @@ fn render_header(resolution: &Resolution, color: bool) -> String {
             "workspace:",
             format!(
                 "{}  ({} members, {} selected)",
-                resolution.workspace_root,
+                root,
                 resolution.member_count,
                 resolution.selected.len()
             ),
@@ -383,7 +393,10 @@ fn render_finding(finding: &Finding, report: &Report, color: bool, width: usize)
 
 /// The visible columns before a row's value: two leading spaces, the gutter
 /// glyph, a space, a ten-column label and two separating spaces.
-const VALUE_COLUMN: usize = 14;
+///
+/// Public so a caller can state the wrap budget a given width produces without
+/// duplicating the layout arithmetic.
+pub const VALUE_COLUMN: usize = 14;
 
 /// The columns a row label occupies, excluding the spaces after it.
 const LABEL_WIDTH: usize = 10;

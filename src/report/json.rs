@@ -22,8 +22,12 @@ pub const SCHEMA_VERSION: u32 = 1;
 ///
 /// Returns [`ZempicError::ReportSerialize`](crate::ZempicError::ReportSerialize)
 /// when the document cannot be serialized.
-pub fn render(report: &Report) -> crate::Result<String> {
-    let document = Document::from_report(report);
+///
+/// `root` is the path written as the document's `workspace_root`, as
+/// [`human::render`](crate::report::human::render) documents: a caller may
+/// print a stand-in instead of the root the analysis recorded.
+pub fn render(report: &Report, root: &camino::Utf8Path) -> crate::Result<String> {
+    let document = Document::from_report(report, root);
 
     let mut text = serde_json::to_string_pretty(&document)
         .map_err(|source| crate::ZempicError::ReportSerialize { source })?;
@@ -50,14 +54,12 @@ struct Document {
 
 impl Document {
     /// Build the document from a report.
-    fn from_report(report: &Report) -> Self {
-        let root = report.resolution.workspace_root.clone();
-
+    fn from_report(report: &Report, root: &camino::Utf8Path) -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
             zempic_version: env!("CARGO_PKG_VERSION"),
             kb_version: crate::knowledge::KNOWLEDGE_BASE_VERSION,
-            workspace_root: root.clone().into_string(),
+            workspace_root: root.as_str().to_owned(),
             profile: report.resolution.profile.name.clone(),
             dimensions: report
                 .resolution
@@ -68,7 +70,7 @@ impl Document {
             findings: report
                 .findings
                 .iter()
-                .map(|finding| FindingObject::from_finding(finding, &root))
+                .map(|finding| FindingObject::from_finding(finding, root))
                 .collect(),
             conflicts: report
                 .conflicts
