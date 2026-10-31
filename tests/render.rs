@@ -14,11 +14,28 @@ use cargo_zempic::{AnalysisConfig, analyze};
 /// Materialize `fixture`, analyze it, and render the report in `format`.
 ///
 /// The analysis uses the default configuration, so a snapshot varies only with
-/// the fixture. Output is uncolored and, for the human renderer, fixed at 80
-/// columns.
+/// the fixture. Output is uncolored and, for the human renderer, laid out to
+/// [`SNAPSHOT_WIDTH`].
 fn rendered(fixture: &str, format: Format) -> String {
     rendered_for(fixture, format, None)
 }
+
+/// The column budget snapshots are recorded at.
+///
+/// The human renderer wraps prose to the budget its caller gives it, so a
+/// snapshot taken at another width records a different wrap. Pinning the width
+/// here keeps the recorded layout a property of the fixture rather than of the
+/// machine that produced it.
+const SNAPSHOT_WIDTH: usize = cargo_zempic::report::MINIMUM_WIDTH;
+
+/// The workspace root the renderers print in place of the real one.
+///
+/// A fixture materializes under a temporary directory whose path differs per
+/// host and per test runner, and the human renderer wraps prose that quotes a
+/// file's path, which contains the root. Printing this stand-in instead of the
+/// real root keeps the recorded wrap a property of the fixture rather than of
+/// the directory it happened to be materialized under.
+const SNAPSHOT_ROOT: &str = "[WORKSPACE_ROOT]";
 
 /// Render `fixture` through `format`, optionally pinning the target triple.
 fn rendered_for(fixture: &str, format: Format, target: Option<&str>) -> String {
@@ -41,13 +58,15 @@ fn rendered_for(fixture: &str, format: Format, target: Option<&str>) -> String {
     };
 
     let report = analyze(&config).expect("the analysis succeeds");
-    let document = match format {
-        Format::Human => cargo_zempic::report::human::render(&report, false, 80),
-        Format::Json => cargo_zempic::report::json::render(&report).expect("the JSON renders"),
-        Format::Markdown => cargo_zempic::report::markdown::render(&report),
-    };
+    let root = camino::Utf8Path::new(SNAPSHOT_ROOT);
 
-    document.replace(workspace.root().as_str(), "[WORKSPACE_ROOT]")
+    match format {
+        Format::Human => cargo_zempic::report::human::render(&report, false, SNAPSHOT_WIDTH, root),
+        Format::Json => {
+            cargo_zempic::report::json::render(&report, root).expect("the JSON renders")
+        }
+        Format::Markdown => cargo_zempic::report::markdown::render(&report, root),
+    }
 }
 
 /// Assert a snapshot under the settings that normalize the workspace root, the
@@ -241,6 +260,31 @@ fn rustflags_shadowed_human() {
             Format::Human,
             Some("x86_64-unknown-linux-gnu"),
         ),
+    );
+}
+
+/// Assert the renderer wraps to the budget [`SNAPSHOT_WIDTH`] implies.
+///
+/// The snapshots record wrapped prose, so they catch a width change only as a
+/// diff to be accepted. Pinning the wrap point here instead names the width
+/// that moved, so a budget that drifts from the recorded one fails as a budget
+/// mismatch rather than as a snapshot to re-approve.
+#[test]
+fn renderer_wraps_to_the_snapshot_budget() {
+    let budget = SNAPSHOT_WIDTH - cargo_zempic::report::human::VALUE_COLUMN;
+    let document = rendered("link-dead-code", Format::Human);
+
+    // The longest row in the fixture wraps at the budget, and where it breaks
+    // moves with the width: one column narrower breaks before `otherwise`.
+    let wrapped = document
+        .lines()
+        .find(|line| line.contains("which keeps symbols the linker would"))
+        .expect("the dead-code finding states what the flag keeps");
+
+    assert!(
+        wrapped.ends_with("which keeps symbols the linker would otherwise"),
+        "at budget {budget} the row wrapped as `{wrapped}`, which is not the \
+         recorded wrap point; the rendering width has drifted"
     );
 }
 
