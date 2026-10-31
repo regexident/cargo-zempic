@@ -416,7 +416,7 @@ enum PathDefect {
 /// Split `path_text` on `/` and validate every segment.
 ///
 /// A path is a sequence of one or more non-empty segments, so this is the one
-/// definition of §4.2's `segment` production used by both [`RuleId`] and
+/// definition of the path-segment grammar used by both [`RuleId`] and
 /// [`Selector`]; a caller may pass an empty text for a selector's empty path.
 fn validate_path(path_text: &str) -> std::result::Result<Vec<String>, PathDefect> {
     let mut segments = Vec::new();

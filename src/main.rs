@@ -16,12 +16,11 @@ use clap::Parser;
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
-/// The exit code §12.4 assigns to a zempic error: an unparseable manifest, a
+/// The exit code reporting a zempic error: an unparseable manifest, a
 /// metadata failure or invalid arguments.
 const ZEMPIC_ERROR_EXIT: u8 = 2;
 
-/// The exit code §12.4 assigns to a report carrying findings at or above the
-/// configured threshold.
+/// The exit code reporting a finding at or above the configured threshold.
 const FINDINGS_GATED_EXIT: u8 = 1;
 
 fn main() -> ExitCode {

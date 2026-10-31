@@ -19,7 +19,7 @@ use crate::rules::{Rule, RuleContext, RuleMetadata};
 
 /// Whether `package` is selected and emits an artifact a linker flag governs.
 ///
-/// §7.1: a linker flag governs a linked artifact but not an `rlib` or a
+/// A linker flag governs a linked artifact but not an `rlib` or a
 /// procedural macro, which is built for the host rather than linked into the
 /// program under analysis. A rule reading [`RuleContext::cargo_configs`] gates
 /// on this predicate for the same reason the `profile/*` rules gate on

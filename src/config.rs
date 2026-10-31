@@ -680,7 +680,7 @@ mod tests {
     use crate::report::{FailOn, Format, Notice};
     use camino::Utf8Path;
 
-    /// The §6.2 schema.
+    /// A configuration setting every key the schema accepts.
     const FULL_SCHEMA: &str = "\
 schema_version = 1
 

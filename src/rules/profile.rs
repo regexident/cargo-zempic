@@ -22,7 +22,7 @@ use crate::rules::{Rule, RuleContext, RuleMetadata};
 
 /// Whether any selected package emits an artifact the profile governs.
 ///
-/// §7.1: a profile governs a linked artifact but not an `rlib` or a procedural
+/// A profile governs a linked artifact but not an `rlib` or a procedural
 /// macro. Every `profile/*` rule returns nothing when this is false.
 fn profile_rules_apply(context: &RuleContext<'_>) -> bool {
     context

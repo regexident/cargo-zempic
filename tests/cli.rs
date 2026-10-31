@@ -171,7 +171,7 @@ fn unknown_package_exits_two() {
 
 #[test]
 fn output_contains_no_size_figure() {
-    // `bare-release` fires the most rules, so it is where a §2 violation in a
+    // `bare-release` fires the most rules, so it is where a size figure in a
     // rule's prose would appear; `multi-member` covers the empty-report path.
     for fixture in ["bare-release", "multi-member"] {
         let workspace = common::Fixture::new(fixture).materialize();

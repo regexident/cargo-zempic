@@ -3944,8 +3944,7 @@ fn link_gc_sections_fires_when_dead_code_suppresses_the_default() {
         finding.tradeoff
     );
 
-    // Plausible bug: implementing §9.2's condition literally and recommending
-    // a generic flag rather than the resolved target's own spelling.
+    // Plausible bug: recommending a generic flag rather than the resolved target's own spelling.
     let darwin_findings = findings_for("link-dead-code", Some("aarch64-apple-darwin"));
     let darwin_finding = finding_for(&darwin_findings, "config/link-gc-sections");
     let darwin_change = darwin_finding
