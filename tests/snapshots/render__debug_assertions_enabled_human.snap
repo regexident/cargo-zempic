@@ -1,8 +1,9 @@
 ---
 source: tests/render.rs
+assertion_line: 72
 expression: document
 ---
-cargo-zempic 0.0.1
+cargo-zempic [VERSION]
   workspace:      [WORKSPACE_ROOT]  (1 members, 1 selected)
   profile:        release  (inherits: none)
   optimizing for: size

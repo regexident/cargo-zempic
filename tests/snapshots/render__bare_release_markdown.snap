@@ -1,8 +1,9 @@
 ---
 source: tests/render.rs
+assertion_line: 72
 expression: document
 ---
-# cargo-zempic 0.0.1
+# cargo-zempic [VERSION]
 
 - Workspace: `[WORKSPACE_ROOT]`
 - Members: 1 (1 selected)
