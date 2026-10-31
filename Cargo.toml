@@ -22,7 +22,7 @@ yansi = "1.0.1"
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
-insta = "=1.48.0"
+insta = { version = "=1.48.0", features = ["filters"] }
 predicates = "3.1.4"
 tempfile = "3.27.0"
 
