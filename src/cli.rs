@@ -243,13 +243,17 @@ pub struct AnalysisArgs {
 
 /// Reject an invocation that selected a target-selection flag.
 ///
-/// Returns the diagnostic rejecting the first target-selection flag present, or
-/// `Ok(())` when the invocation carries none. The conversion into an
-/// [`AnalysisConfig`] ignores the rejected flags entirely, so this is the only
-/// gate that stops one from reaching the analysis.
-pub fn validate(args: &AnalysisArgs) -> Result<(), String> {
+/// Returns `Ok(())` when the invocation carries no target-selection flag. The
+/// conversion into an [`AnalysisConfig`] ignores the rejected flags entirely,
+/// so this is the only gate that stops one from reaching the analysis.
+///
+/// # Errors
+///
+/// Returns [`ZempicError::RejectedTargetFlag`](crate::ZempicError::RejectedTargetFlag)
+/// naming the first target-selection flag present.
+pub fn validate(args: &AnalysisArgs) -> crate::Result<()> {
     match reject::rejected_flag(&args.rejected) {
-        Some(flag) => Err(reject::diagnostic(flag)),
+        Some(flag) => Err(crate::ZempicError::RejectedTargetFlag { flag }),
         None => Ok(()),
     }
 }
@@ -532,19 +536,27 @@ mod tests {
         let error =
             super::validate(analysis(&args)).expect_err("the rejected flag fails validation");
 
+        assert!(matches!(
+            error,
+            crate::ZempicError::RejectedTargetFlag { flag: "--bin" }
+        ));
         assert!(
-            error.starts_with("error: `--bin` is not supported\n"),
-            "the diagnostic names the flag, got: {error:?}"
+            error.to_string().starts_with("`--bin` is not supported\n"),
+            "the diagnostic names the flag, got: {error}"
         );
     }
 
     #[test]
     fn rejected_flag_diagnostic_explains_per_package_narrowing() {
-        let error = super::reject::diagnostic("--all-targets");
+        let message = crate::ZempicError::RejectedTargetFlag {
+            flag: "--all-targets",
+        }
+        .to_string();
 
         assert!(
-            error.contains("per-package, not per-target. Use `--package` to narrow the analysis."),
-            "the diagnostic explains the narrowing, got: {error:?}"
+            message
+                .contains("per-package, not per-target. Use `--package` to narrow the analysis."),
+            "the diagnostic explains the narrowing, got: {message:?}"
         );
     }
 

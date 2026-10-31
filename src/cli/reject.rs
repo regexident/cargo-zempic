@@ -4,8 +4,9 @@
 //! individual targets, but zempic analyzes settings that apply per profile and
 //! per package. Accepting one of these flags would imply a precision the
 //! analysis does not have, so they are declared here — hidden from `--help` —
-//! purely so [`diagnostic`] can explain the mismatch instead of clap emitting
-//! its generic unexpected-argument text.
+//! purely so [`ZempicError::RejectedTargetFlag`](crate::ZempicError::RejectedTargetFlag)
+//! can explain the mismatch instead of clap emitting its generic
+//! unexpected-argument text.
 
 use clap::Args;
 
@@ -87,14 +88,4 @@ pub fn rejected_flag(args: &RejectedTargetArgs) -> Option<&'static str> {
     }
 
     None
-}
-
-/// The diagnostic explaining that `flag` is not supported.
-///
-/// The explanation names why the flag cannot be honored and points at
-/// `--package` as the supported way to narrow the analysis.
-pub fn diagnostic(flag: &str) -> String {
-    format!(
-        "error: `{flag}` is not supported\n\n  zempic analyzes cargo profiles and dependencies, which apply per-profile and\n  per-package, not per-target. Use `--package` to narrow the analysis.\n"
-    )
 }

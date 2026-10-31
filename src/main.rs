@@ -58,7 +58,7 @@ fn main() -> ExitCode {
 fn run(args: &Args) -> anyhow::Result<bool> {
     match &args.command {
         Command::Check(check_args) => {
-            cargo_zempic::cli::validate(&check_args.analysis).map_err(anyhow::Error::msg)?;
+            cargo_zempic::cli::validate(&check_args.analysis)?;
 
             let config = AnalysisConfig::from(&check_args.analysis);
             let report = analyze(&config).context("failed to analyze the workspace")?;

@@ -64,7 +64,7 @@ fn rejected_flag_exits_two_with_the_specific_diagnostic() {
         .args(["check", "--bin", "foo"])
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("error: `--bin` is not supported"));
+        .stderr(predicate::str::starts_with("`--bin` is not supported"));
 }
 
 #[test]

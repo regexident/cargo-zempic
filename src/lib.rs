@@ -267,6 +267,15 @@ pub enum ZempicError {
         /// What makes the entry invalid.
         detail: String,
     },
+
+    /// The invocation selected a target-selection flag the analysis cannot honor.
+    #[error(
+        "`{flag}` is not supported\n\n  zempic analyzes cargo profiles and dependencies, which apply per-profile and\n  per-package, not per-target. Use `--package` to narrow the analysis."
+    )]
+    RejectedTargetFlag {
+        /// The canonical spelling of the rejected flag.
+        flag: &'static str,
+    },
 }
 
 /// The inputs a resolution runs from.
