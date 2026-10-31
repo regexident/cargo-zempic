@@ -218,10 +218,14 @@ fn dead_code_source(
         Fixability::ReportOnly
     };
 
+    // The file is named relative to the workspace root, as a finding's `at`
+    // row names it, so the detail carries no absolute path.
+    let file = span.file.strip_prefix(workspace_root).unwrap_or(&span.file);
+
     DeadCodeSource {
         location: span.clone(),
         fixability,
-        description: format!("`{}` in `{}`", span.key, span.file),
+        description: format!("`{}` in `{}`", span.key, file),
     }
 }
 
@@ -621,7 +625,7 @@ mod tests {
         assert_eq!(inside.fixability, Fixability::Safe);
         assert_eq!(
             inside.description,
-            "`build.rustflags` in `/w/.cargo/config.toml`"
+            "`build.rustflags` in `.cargo/config.toml`"
         );
 
         let outside = dead_code_source(&resolved, Utf8Path::new("/elsewhere"), Fixability::Safe);
